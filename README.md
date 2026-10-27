@@ -25,7 +25,9 @@ fontes  ->  scrapers  ->  normalização + dedup  ->  PostgreSQL  ->  API + aler
 
 1. **Scraping**: cada fonte tem um parser (RSS, HTML com Parsel, ou Playwright no
    LinkedIn) atrás de um cliente HTTP com retries, backoff exponencial,
-   `Retry-After` e intervalo mínimo por site.
+   `Retry-After` e intervalo mínimo por site. No LinkedIn, além das pesquisas
+   fixas, o scraper pesquisa as tecnologias e cidades mais seguidas nos alertas
+   (só valores do vocabulário conhecido, no máximo 8 pesquisas extra).
 2. **Normalização**: cidade, regime (remoto, híbrido, presencial), salário anual
    em EUR e tecnologias.
 3. **Deduplicação**: por fonte, um upsert idempotente. Entre fontes, um
@@ -87,9 +89,11 @@ python -m ptjobs run                     # scrape + notify
 | GET | `/jobs/{id}` | Detalhe da vaga, com `also_on` (outras fontes) |
 | GET | `/sources` | Última execução de cada scraper |
 | POST | `/subscriptions` | Cria uma subscrição de alertas (opt-in) |
-| GET | `/subscriptions/verify` | Confirma a subscrição (email e Discord) |
+| GET / POST | `/subscriptions/verify` | Página de confirmação (email e Discord); só o POST confirma |
 | GET / PATCH / DELETE | `/subscriptions/me` | Gere a subscrição com `Authorization: Bearer <manage_token>` |
 | POST | `/subscriptions/unsubscribe` | Cancela com o manage token no body |
+| GET / POST | `/subscriptions/unsubscribe/{token}` | Link de cancelamento enviado em cada alerta (one-click RFC 8058) |
+| POST | `/subscriptions/recover` | Envia um novo manage token para um alerta de email (1 vez por hora) |
 | POST | `/telegram/webhook` | Webhook do bot de Telegram |
 
 Filtros de `/jobs`: `q`, `city`, `work_mode`, `tag`, `min_salary`, `source`,
@@ -105,8 +109,10 @@ Exemplo de subscrição:
 }
 ```
 
-A resposta traz o `manage_token` uma única vez. Guarda-o para gerir ou cancelar
-a subscrição.
+A resposta traz o `manage_token` uma única vez. Guarda-o para gerir a
+subscrição. Se o perderes, `POST /subscriptions/recover` com
+`{"email": "..."}` envia um novo para alertas de email; no Telegram usa `/token`.
+Cada alerta traz um link para cancelar sem token.
 
 ## Configuração
 
@@ -172,7 +178,8 @@ Também dá para gerir tudo só pelo bot, sem usar a API:
 |---------|-----|
 | `/start` | Ativa alertas neste chat |
 | `/filtros` | Mostra os filtros |
-| `/tags python react` | Define tecnologias |
+| `/tags python react` | Define tecnologias (substitui as atuais) |
+| `/tags +go -react` | Adiciona ou remove sem apagar o resto |
 | `/cidades lisboa porto` | Define cidades |
 | `/modo remoto hibrido presencial` | Define o regime de trabalho |
 | `/palavras django` | Palavras no título ou descrição |
@@ -181,7 +188,8 @@ Também dá para gerir tudo só pelo bot, sem usar a API:
 | `/token` | Gera um novo token de gestão para a API |
 | `/parar` | Cancela os alertas |
 
-Um comando sem valores apaga esse filtro (por exemplo `/tags`).
+Um comando sem valores apaga esse filtro (por exemplo `/tags`). O `+`/`-`
+funciona em `/tags`, `/cidades`, `/modo` e `/palavras`.
 
 ## Deploy (Coolify)
 

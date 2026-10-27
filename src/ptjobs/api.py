@@ -10,7 +10,7 @@ from importlib.metadata import version
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, Header, Path, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ptjobs import notify, telegram_bot
+from ptjobs import digest, notify, telegram_bot
 from ptjobs.config import Settings, get_settings
 from ptjobs.db import session_scope
 from ptjobs.errors import (
@@ -30,7 +30,6 @@ from ptjobs.errors import (
     NotFoundError,
     RateLimitError,
     UnauthorizedError,
-    ValidationError,
 )
 from ptjobs.models import INT32_MAX, SOURCES, Job, ScrapeRun, Subscription
 from ptjobs.schemas import (
@@ -39,6 +38,7 @@ from ptjobs.schemas import (
     JobDetail,
     JobPage,
     JobSummary,
+    RecoverRequest,
     Source,
     SourceStatus,
     SubscriptionCreate,
@@ -105,6 +105,34 @@ SCALAR_HTML = """<!doctype html>
 </html>
 """
 UNVERIFIED_TTL = timedelta(hours=24)
+RECOVER_INTERVAL = timedelta(hours=1)
+INVALID_VERIFY_PAGE = (
+    "Link já usado ou inválido",
+    "Se já confirmaste, os alertas estão ativos. Caso contrário, cria uma nova "
+    "subscrição.",
+)
+TELEGRAM_VERIFY_PAGE = (
+    "Confirma no Telegram",
+    "As subscrições de Telegram confirmam-se abrindo o link do bot.",
+)
+VERIFIED_PAGE = (
+    "Subscrição confirmada",
+    "Vais começar a receber as novas vagas tech que batem com os teus filtros.",
+)
+UNSUBSCRIBED_PAGE = (
+    "Alertas cancelados",
+    "Não vais receber mais alertas deste canal.",
+)
+
+
+class _PageError(Exception):
+    """Abort an HTML route with a styled error page."""
+
+    def __init__(self, status: int, title: str, message: str) -> None:
+        super().__init__(title)
+        self.status, self.title, self.message = status, title, message
+
+
 # Chunked bodies without Content-Length are not counted; the proxy should cap those.
 MAX_BODY_BYTES = 64 * 1024
 SECURITY_HEADERS = {
@@ -121,17 +149,17 @@ def _default_verifier(channel: str, target: str | None, token: str) -> None:
     settings = get_settings()
     link = f"{settings.public_base_url}/subscriptions/verify?token={token}"
     if channel == "email" and target:
+        text_body, html_body = digest.render_verification_email(link)
         notify.send_email(
             settings,
             target,
             "Confirma a tua subscrição de alertas",
-            f"Confirma a tua subscrição de alertas de vagas tech neste link: {link}",
+            text_body,
+            html=html_body,
         )
     elif channel == "discord" and target:
         notify.send_discord(
-            target,
-            f"Confirma a tua subscrição de alertas de vagas tech: {link}",
-            client=_http_client,
+            target, digest.render_discord_verification(link), client=_http_client
         )
 
 
@@ -180,6 +208,12 @@ def create_app() -> FastAPI:
             500: {"model": ErrorResponse},
         },
     )
+
+    @app.exception_handler(_PageError)
+    async def _page_error(_: Request, exc: _PageError) -> HTMLResponse:
+        return HTMLResponse(
+            digest.render_page(exc.title, exc.message), status_code=exc.status
+        )
 
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
@@ -392,6 +426,7 @@ def create_app() -> FastAPI:
             filters=body.filters.model_dump(exclude_defaults=True),
             manage_token_hash=notify.hash_token(manage_token),
             verify_token_hash=notify.hash_token(verify_token),
+            unsubscribe_token=notify.new_token(),
         )
         db.add(subscription)
         db.flush()
@@ -405,24 +440,55 @@ def create_app() -> FastAPI:
             id=subscription.id, manage_token=manage_token, deep_link=deep_link
         )
 
-    @app.get("/subscriptions/verify", tags=["subscriptions"])
-    def verify_subscription(
-        token: str = Query(max_length=128), db: Session = Depends(get_db)
-    ) -> dict[str, str]:
-        """Confirm an email or Discord alert with the token from its link."""
+    def _pending_verification(db: Session, token: str) -> Subscription:
         subscription = db.scalar(
             select(Subscription).where(
                 Subscription.verify_token_hash == notify.hash_token(token)
             )
         )
         if subscription is None:
-            raise NotFoundError("Subscription", "token")
+            raise _PageError(404, *INVALID_VERIFY_PAGE)
         if subscription.channel == "telegram":
-            raise ValidationError("Telegram subscriptions verify via the bot")
+            raise _PageError(422, *TELEGRAM_VERIFY_PAGE)
+        return subscription
+
+    @app.get(
+        "/subscriptions/verify",
+        response_class=HTMLResponse,
+        tags=["subscriptions"],
+    )
+    def verify_page(
+        token: str = Query(max_length=128),
+        db: Session = Depends(get_db),
+    ) -> HTMLResponse:
+        """Show the confirmation button for an email or Discord alert.
+
+        Opening the link changes nothing, so link previews and mail scanners
+        cannot confirm a subscription; the button POSTs to the same URL.
+        """
+        _pending_verification(db, token)
+        return HTMLResponse(
+            digest.render_page(
+                "Confirma a tua subscrição",
+                "Carrega em Confirmar para começares a receber as novas vagas tech.",
+                confirm=True,
+            )
+        )
+
+    @app.post(
+        "/subscriptions/verify",
+        response_class=HTMLResponse,
+        tags=["subscriptions"],
+    )
+    def verify_subscription(
+        token: str = Query(max_length=128), db: Session = Depends(get_db)
+    ) -> HTMLResponse:
+        """Confirm an email or Discord alert with the token from its link."""
+        subscription = _pending_verification(db, token)
         subscription.verified_at = func.now()
         subscription.verify_token_hash = None
         db.flush()
-        return {"status": "verified"}
+        return HTMLResponse(digest.render_page(*VERIFIED_PAGE))
 
     @app.get(
         "/subscriptions/me", response_model=SubscriptionOut, tags=["subscriptions"]
@@ -470,6 +536,84 @@ def create_app() -> FastAPI:
         db.flush()
         return {"status": "unsubscribed"}
 
+    @app.get(
+        "/subscriptions/unsubscribe/{token}",
+        response_class=HTMLResponse,
+        tags=["subscriptions"],
+    )
+    def unsubscribe_page(token: str = Path(max_length=128)) -> HTMLResponse:
+        """Show the cancel button for the unsubscribe link sent in every digest."""
+        return HTMLResponse(
+            digest.render_page(
+                "Cancelar alertas",
+                "Carrega em Confirmar para deixares de receber estes alertas.",
+                confirm=True,
+            )
+        )
+
+    @app.post(
+        "/subscriptions/unsubscribe/{token}",
+        response_class=HTMLResponse,
+        tags=["subscriptions"],
+    )
+    def unsubscribe_by_link(
+        token: str = Path(max_length=128), db: Session = Depends(get_db)
+    ) -> HTMLResponse:
+        """Delete the alert behind an unsubscribe link (also RFC 8058 one-click).
+
+        Always answers with the same page so tokens cannot be probed.
+        """
+        subscription = db.scalar(
+            select(Subscription).where(Subscription.unsubscribe_token == token)
+        )
+        if subscription is not None:
+            db.delete(subscription)
+            db.flush()
+        return HTMLResponse(digest.render_page(*UNSUBSCRIBED_PAGE))
+
+    @app.post("/subscriptions/recover", status_code=202, tags=["subscriptions"])
+    def recover_token(
+        body: RecoverRequest,
+        background: BackgroundTasks,
+        db: Session = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ) -> dict[str, str]:
+        """Email a new manage token to a verified email alert.
+
+        The answer is the same whether or not the address is subscribed, the
+        email is sent after the response, and each alert can recover once per
+        hour. The old token stops working.
+        """
+        email = body.email.strip().lower()
+        cutoff = datetime.now(UTC) - RECOVER_INTERVAL
+        subscriptions = db.scalars(
+            select(Subscription).where(
+                Subscription.channel == "email",
+                Subscription.target == email,
+                Subscription.verified_at.is_not(None),
+                or_(
+                    Subscription.recovered_at.is_(None),
+                    Subscription.recovered_at < cutoff,
+                ),
+            )
+        ).all()
+        for subscription in subscriptions:
+            token = notify.new_token()
+            subscription.manage_token_hash = notify.hash_token(token)
+            subscription.recovered_at = func.now()
+            if not subscription.unsubscribe_token:
+                subscription.unsubscribe_token = notify.new_token()
+            text_body, html_body = digest.render_recovery_email(
+                token,
+                f"{settings.public_base_url}/docs",
+                notify.unsubscribe_url(
+                    settings.public_base_url, subscription.unsubscribe_token
+                ),
+            )
+            background.add_task(_send_quietly, settings, email, text_body, html_body)
+        db.flush()
+        return {"status": "accepted"}
+
     @app.post("/telegram/webhook", tags=["subscriptions"])
     def telegram_webhook(
         update: dict[str, Any],
@@ -494,6 +638,15 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     return app
+
+
+def _send_quietly(settings: Settings, to: str, text_body: str, html_body: str) -> None:
+    try:
+        notify.send_email(
+            settings, to, "Novo token de gestão", text_body, html=html_body
+        )
+    except ChannelError:
+        logger.exception("recovery email failed")
 
 
 def _reply_telegram(settings: Settings, chat_id: str, text: str) -> None:

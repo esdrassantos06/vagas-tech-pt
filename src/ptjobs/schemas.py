@@ -13,10 +13,12 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    field_validator,
     model_validator,
 )
 
 from ptjobs.models import INT32_MAX
+from ptjobs.normalize import canonical_tag
 from ptjobs.notify import validate_discord_webhook
 
 MAX_ITEMS = 20
@@ -31,6 +33,7 @@ def _reject_nul(value: str) -> str:
 FilterTerm = Annotated[
     str, StringConstraints(min_length=1, max_length=50), AfterValidator(_reject_nul)
 ]
+TagTerm = Annotated[FilterTerm, AfterValidator(canonical_tag)]
 Target = Annotated[str, StringConstraints(max_length=500), AfterValidator(_reject_nul)]
 Token = Annotated[str, StringConstraints(max_length=128), AfterValidator(_reject_nul)]
 WorkMode = Literal["onsite", "hybrid", "remote", "unknown"]
@@ -116,8 +119,13 @@ class SubscriptionFilters(BaseModel):
     keywords: list[FilterTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
     cities: list[FilterTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
     work_modes: list[WorkMode] = Field(default_factory=list, max_length=4)
-    tags: list[FilterTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
+    tags: list[TagTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
     min_salary: int | None = Field(default=None, ge=0, le=INT32_MAX)
+
+    @field_validator("keywords", "cities", "tags")
+    @classmethod
+    def _dedupe(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
 
 
 class SubscriptionCreate(BaseModel):
@@ -161,6 +169,12 @@ class UnsubscribeRequest(BaseModel):
     """Request body to unsubscribe using a manage token."""
 
     token: Token
+
+
+class RecoverRequest(BaseModel):
+    """Request body to email a new manage token to an email alert."""
+
+    email: Target = Field(examples=["dev@example.com"])
 
 
 class SubscriptionCreated(BaseModel):

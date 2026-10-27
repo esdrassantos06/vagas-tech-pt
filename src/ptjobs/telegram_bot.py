@@ -7,7 +7,7 @@ the subscriptions whose target is that chat without needing a manage token.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -21,7 +21,8 @@ HELP = (
     "Comandos:\n"
     "/start - ativar alertas neste chat\n"
     "/filtros - ver os teus filtros\n"
-    "/tags python react - tecnologias\n"
+    "/tags python react - tecnologias (substitui)\n"
+    "/tags +go -react - adicionar ou remover\n"
     "/cidades lisboa porto - cidades\n"
     "/modo remoto hibrido presencial - regime de trabalho\n"
     "/palavras django - palavras no título ou descrição\n"
@@ -29,7 +30,9 @@ HELP = (
     "/limpar - apagar todos os filtros\n"
     "/token - novo token de gestão para a API\n"
     "/parar - cancelar os alertas\n\n"
-    "Um comando sem valores apaga esse filtro, por exemplo /tags."
+    "Um comando sem valores apaga esse filtro, por exemplo /tags. "
+    "Usa + e - em /tags, /cidades, /modo e /palavras para editar sem "
+    "apagar o resto."
 )
 WELCOME = "Alertas ativos. Sem filtros recebes todas as vagas tech.\n\n" + HELP
 ALREADY_ACTIVE = "Já tens alertas ativos neste chat.\n\n" + HELP
@@ -131,6 +134,7 @@ def _start(db: Session, chat_id: str, args: list[str]) -> str:
             target=chat_id,
             filters={},
             manage_token_hash=notify.hash_token(notify.new_token()),
+            unsubscribe_token=notify.new_token(),
             verified_at=func.now(),
         )
     )
@@ -171,16 +175,28 @@ def _normalize_values(key: str, values: list[str]) -> list[str]:
         return [normalize.normalize_city(v) or v.lower() for v in values]
     if key == "work_modes":
         return [normalize.normalize_work_mode(v) for v in values]
+    if key == "tags":
+        return [normalize.canonical_tag(v) for v in values]
     return [v.lower() for v in values]
 
 
 def _set_list(
     db: Session, subscriptions: list[Subscription], key: str, args: list[str]
 ) -> str:
+    """Replace a list filter, or edit it when every value starts with + or -."""
     filters = dict(subscriptions[0].filters)
-    values = _normalize_values(key, args)
+    edits = bool(args) and all(arg[0] in "+-" and len(arg) > 1 for arg in args)
+    values = _normalize_values(key, [arg[1:] if edits else arg for arg in args])
     if "unknown" in values:
         return REJECTED.format(reason="usa remoto, hibrido ou presencial.")
+    if edits:
+        current = list(cast("list[str]", filters.get(key, [])))
+        for arg, value in zip(args, values, strict=True):
+            if arg[0] == "+" and value not in current:
+                current.append(value)
+            elif arg[0] == "-" and value in current:
+                current.remove(value)
+        values = current
     if values:
         filters[key] = values
     else:

@@ -57,7 +57,10 @@ def run_notify() -> None:
         deliver = build_deliver(settings, client)
         with session_scope() as session:
             run_digest(
-                session, deliver=deliver, jobs_url=f"{settings.public_base_url}/jobs"
+                session,
+                deliver=deliver,
+                jobs_url=f"{settings.public_base_url}/jobs",
+                base_url=settings.public_base_url,
             )
 
 

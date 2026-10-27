@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from ptjobs.digest import Digest
 from ptjobs.errors import ChannelError
 from ptjobs.models import Job
 from ptjobs.notify import (
@@ -26,6 +27,11 @@ def _job(**over) -> Job:
     }
     base.update(over)
     return Job(**base)
+
+
+_DIGEST = Digest(
+    jobs=[_job()], remaining=0, jobs_url="https://v/jobs", unsubscribe_url="https://v/u"
+)
 
 
 class TestMatching:
@@ -202,7 +208,7 @@ class TestBuildDeliver:
             )
         )
         deliver = build_deliver(Settings(), client)
-        deliver(self._sub("discord", "https://discord.com/api/webhooks/1/a"), "body")
+        deliver(self._sub("discord", "https://discord.com/api/webhooks/1/a"), _DIGEST)
         assert "discord.com" in seen["url"]
 
     def test_dispatches_telegram(self) -> None:
@@ -219,7 +225,7 @@ class TestBuildDeliver:
             )
         )
         deliver = build_deliver(Settings(telegram_bot_token="BT"), client)
-        deliver(self._sub("telegram", "12345"), "body")
+        deliver(self._sub("telegram", "12345"), _DIGEST)
         assert "botBT/sendMessage" in seen["url"]
 
     def test_missing_target_raises(self) -> None:
@@ -232,38 +238,11 @@ class TestBuildDeliver:
         )
         deliver = build_deliver(Settings(), client)
         with pytest.raises(ChannelError):
-            deliver(self._sub("discord", None), "body")
+            deliver(self._sub("discord", None), _DIGEST)
 
 
 def test_min_salary_zero_means_no_filter() -> None:
     assert job_matches(_job(salary_max=None), {"min_salary": 0}) is True
-
-
-class TestDigestLimits:
-    def _jobs(self, n: int) -> list[Job]:
-        return [
-            _job(title=f"Senior Python Developer number {i}", url=f"https://x/{i}")
-            for i in range(n)
-        ]
-
-    def test_fits_within_max_chars_and_reports_rest(self) -> None:
-        from ptjobs.notify import format_digest
-
-        jobs = self._jobs(100)
-        body = format_digest(jobs, max_chars=500, more_url="https://site/jobs")
-        shown = body.count("\n- ")
-        assert len(body) <= 500
-        assert 0 < shown < 100
-        assert f"e mais {100 - shown} vaga(s): https://site/jobs" in body
-
-    def test_no_footer_when_everything_fits(self) -> None:
-        from ptjobs.notify import format_digest
-
-        body = format_digest(
-            self._jobs(2), max_chars=4000, more_url="https://site/jobs"
-        )
-        assert body.count("\n- ") == 2
-        assert "e mais" not in body
 
 
 def test_send_telegram_error_hides_bot_token() -> None:
@@ -288,7 +267,7 @@ def test_failed_delivery_traceback_never_contains_bot_token() -> None:
         channel="telegram", target="1", filters={}, manage_token_hash="h"
     )
     with pytest.raises(ChannelError) as exc:
-        deliver(sub, "body")
+        deliver(sub, _DIGEST)
     assert "SECRETTOKEN" not in "".join(traceback.format_exception(exc.value))
 
 

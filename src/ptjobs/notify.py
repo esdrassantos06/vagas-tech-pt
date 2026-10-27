@@ -18,6 +18,13 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session, aliased
 
 from ptjobs.config import Settings
+from ptjobs.digest import (
+    Digest,
+    render_discord,
+    render_email_html,
+    render_telegram,
+    render_text,
+)
 from ptjobs.errors import ChannelError
 from ptjobs.models import Job, Subscription
 
@@ -84,11 +91,20 @@ def validate_discord_webhook(url: str) -> bool:
     )
 
 
-def send_discord(webhook_url: str, content: str, *, client: httpx.Client) -> None:
-    """Post a message to a validated Discord webhook; ChannelError on failure."""
+def send_discord(
+    webhook_url: str, message: str | dict[str, Any], *, client: httpx.Client
+) -> None:
+    """Post text or a full webhook payload to a validated Discord webhook.
+
+    Raises ChannelError on failure.
+    """
     if not validate_discord_webhook(webhook_url):
         raise ChannelError(f"Invalid Discord webhook URL: {webhook_url}")
-    payload = {"content": content, "allowed_mentions": {"parse": []}}
+    payload = (
+        message
+        if isinstance(message, dict)
+        else {"content": message, "allowed_mentions": {"parse": []}}
+    )
     try:
         response = client.post(webhook_url, json=payload)
         response.raise_for_status()
@@ -101,12 +117,23 @@ def send_discord(webhook_url: str, content: str, *, client: httpx.Client) -> Non
 
 
 def send_telegram(
-    bot_token: str, chat_id: str, text: str, *, client: httpx.Client
+    bot_token: str,
+    chat_id: str,
+    text: str,
+    *,
+    client: httpx.Client,
+    html: bool = False,
 ) -> None:
-    """Send a Telegram message via the Bot API, raising ChannelError on failure."""
+    """Send a Telegram message via the Bot API, raising ChannelError on failure.
+
+    With html=True the text is parsed as Telegram HTML and link previews are off.
+    """
     url = f"{_TELEGRAM_API}/bot{bot_token}/sendMessage"
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    if html:
+        payload |= {"parse_mode": "HTML", "link_preview_options": {"is_disabled": True}}
     try:
-        response = client.post(url, json={"chat_id": chat_id, "text": text})
+        response = client.post(url, json=payload)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         raise ChannelError(
@@ -120,7 +147,7 @@ logger = logging.getLogger(__name__)
 # Bot tokens and webhook secrets live in request URLs; never let httpx log them.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 ACTIVE_WINDOW = timedelta(days=7)
-Deliver = Callable[[Subscription, str], None]
+Deliver = Callable[[Subscription, Digest], None]
 SmtpFactory = Callable[[str, int], SMTP]
 
 
@@ -130,14 +157,25 @@ def send_email(
     subject: str,
     body: str,
     *,
+    html: str | None = None,
+    unsubscribe_url: str | None = None,
     smtp_factory: SmtpFactory = SMTP,
 ) -> None:
-    """Send a plain-text email over SMTP, raising ChannelError on failure."""
+    """Send an email over SMTP, raising ChannelError on failure.
+
+    body is the plain-text part; html adds an HTML alternative. unsubscribe_url
+    adds RFC 8058 one-click List-Unsubscribe headers.
+    """
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = to
     message["Subject"] = subject
+    if unsubscribe_url:
+        message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+        message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     message.set_content(body)
+    if html:
+        message.add_alternative(html, subtype="html")
     try:
         with smtp_factory(settings.smtp_host, settings.smtp_port) as smtp:
             smtp.starttls()
@@ -148,32 +186,12 @@ def send_email(
         raise ChannelError("Email delivery failed") from None
 
 
-CHANNEL_MAX_CHARS = {"discord": 2000, "telegram": 4096, "email": 20000}
+CHANNEL_MAX_JOBS = {"discord": 10, "telegram": 10, "email": 30}
 
 
-def _more_line(remaining: int, more_url: str) -> str:
-    if remaining <= 0:
-        return ""
-    target = f": {more_url}" if more_url else ""
-    return f"\n\n... e mais {remaining} vaga(s){target}"
-
-
-def format_digest(jobs: list[Job], *, max_chars: int = 4096, more_url: str = "") -> str:
-    """Render a plain-text digest that fits in max_chars.
-
-    Jobs that do not fit are summarized in a final "e mais N vaga(s)" line that
-    links to more_url when given.
-    """
-    body = "Novas vagas tech:\n"
-    shown = 0
-    for job in jobs:
-        entry = f"\n- {job.title} @ {job.company}\n  {job.url}"
-        footer = _more_line(len(jobs) - shown - 1, more_url)
-        if len(body) + len(entry) + len(footer) > max_chars:
-            break
-        body += entry
-        shown += 1
-    return body + _more_line(len(jobs) - shown, more_url)
+def unsubscribe_url(base_url: str, token: str) -> str:
+    """Public one-click unsubscribe link for a subscription token."""
+    return f"{base_url}/subscriptions/unsubscribe/{token}"
 
 
 def _new_matching_jobs(
@@ -199,6 +217,7 @@ def run_digest(
     deliver: Deliver,
     now: datetime | None = None,
     jobs_url: str = "",
+    base_url: str = "",
 ) -> int:
     """Deliver one digest per verified subscription with new matching jobs.
 
@@ -216,13 +235,17 @@ def run_digest(
         jobs = _new_matching_jobs(session, subscription, since)
         if not jobs:
             continue
+        if not subscription.unsubscribe_token:
+            subscription.unsubscribe_token = new_token()
+        limit = CHANNEL_MAX_JOBS.get(subscription.channel, 10)
+        digest = Digest(
+            jobs=jobs[:limit],
+            remaining=max(len(jobs) - limit, 0),
+            jobs_url=jobs_url,
+            unsubscribe_url=unsubscribe_url(base_url, subscription.unsubscribe_token),
+        )
         try:
-            body = format_digest(
-                jobs,
-                max_chars=CHANNEL_MAX_CHARS.get(subscription.channel, 2000),
-                more_url=jobs_url,
-            )
-            deliver(subscription, body)
+            deliver(subscription, digest)
         except ChannelError:
             logger.exception("digest delivery failed for %s", subscription.id)
             continue
@@ -238,9 +261,9 @@ _DIGEST_SUBJECT = "Novas vagas tech em Portugal"
 def build_deliver(
     settings: Settings, http_client: httpx.Client, *, smtp_factory: SmtpFactory = SMTP
 ) -> Deliver:
-    """Return a delivery callback routing a digest to a subscription's channel."""
+    """Return a delivery callback rendering a digest for a subscription's channel."""
 
-    def deliver(subscription: Subscription, body: str) -> None:
+    def deliver(subscription: Subscription, digest: Digest) -> None:
         if not subscription.target:
             raise ChannelError(f"Subscription {subscription.id} has no target")
         if subscription.channel == "email":
@@ -248,17 +271,22 @@ def build_deliver(
                 settings,
                 subscription.target,
                 _DIGEST_SUBJECT,
-                body,
+                render_text(digest),
+                html=render_email_html(digest),
+                unsubscribe_url=digest.unsubscribe_url,
                 smtp_factory=smtp_factory,
             )
         elif subscription.channel == "discord":
-            send_discord(subscription.target, body, client=http_client)
+            send_discord(
+                subscription.target, render_discord(digest), client=http_client
+            )
         elif subscription.channel == "telegram":
             send_telegram(
                 settings.telegram_bot_token,
                 subscription.target,
-                body,
+                render_telegram(digest),
                 client=http_client,
+                html=True,
             )
         else:
             raise ChannelError(f"Unknown channel: {subscription.channel}")
