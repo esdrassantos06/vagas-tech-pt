@@ -5,19 +5,22 @@ from __future__ import annotations
 import html
 import re
 import xml.etree.ElementTree as ET
+from datetime import UTC, datetime
 
 from ptjobs.errors import ParseError
 from ptjobs.sources.base import RawJob
 from ptjobs.sources.http import HttpClient
 
 SOURCE = "net_empregos"
-FEED_URL = "https://www.net-empregos.com/rss.asp"
+FEED_URL = "https://www.net-empregos.com/rss.asp?cat={category}"
+IT_CATEGORIES = (5, 38, 37, 35)
 _DC_KEYS = (
     "{http://purl.org/dc/elements/1.1/}creator",
     "{https://purl.org/dc/elements/1.1/}creator",
 )
 _ID_RE = re.compile(r"/(\d+)/")
 _LOCATION_RE = re.compile(r"Zona:\s*</b>\s*([^<]+)", re.IGNORECASE)
+_DATE_RE = re.compile(r"Data:\s*</b>\s*(\d{2})-(\d{2})-(\d{4})", re.IGNORECASE)
 
 
 def parse(xml_text: str | bytes) -> list[RawJob]:
@@ -41,12 +44,13 @@ def parse(xml_text: str | bytes) -> list[RawJob]:
     jobs: list[RawJob] = []
     for item in items:
         link = (item.findtext("link") or "").strip()
-        title = (item.findtext("title") or "").strip()
+        title = html.unescape(item.findtext("title") or "").strip()
         match = _ID_RE.search(link)
         if not match or not title:
             continue
         description = html.unescape(item.findtext("description") or "")
         location = _LOCATION_RE.search(description)
+        posted = _DATE_RE.search(description)
         jobs.append(
             RawJob(
                 source=SOURCE,
@@ -56,6 +60,7 @@ def parse(xml_text: str | bytes) -> list[RawJob]:
                 company=_company(item),
                 location_raw=location.group(1).strip() if location else None,
                 description=description,
+                published_at=_date(posted),
             )
         )
     if not jobs:
@@ -71,10 +76,21 @@ def _company(item: ET.Element) -> str:
     return ""
 
 
-def fetch(client: HttpClient) -> list[RawJob]:
-    """Fetch and parse the net-empregos RSS feed.
+def _date(match: re.Match[str] | None) -> datetime | None:
+    if match is None:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    return datetime(year, month, day, tzinfo=UTC)
 
-    Passes raw bytes to the parser so the feed's declared charset
-    (iso-8859-1) is honored regardless of the HTTP Content-Type header.
+
+def fetch(client: HttpClient) -> list[RawJob]:
+    """Fetch the IT category feeds and return their jobs, deduplicated by id.
+
+    Bytes are passed to the parser so the feed's real encoding is applied
+    regardless of the HTTP Content-Type header.
     """
-    return parse(client.get(FEED_URL).content)
+    jobs: dict[str, RawJob] = {}
+    for category in IT_CATEGORIES:
+        for job in parse(client.get(FEED_URL.format(category=category)).content):
+            jobs.setdefault(job.external_id, job)
+    return list(jobs.values())
