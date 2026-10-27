@@ -166,6 +166,23 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<dominio>/teleg
 A subscrição devolve um `deep_link` para o bot. Ao carregar em `/start`, o chat
 fica associado e verificado.
 
+Também dá para gerir tudo só pelo bot, sem usar a API:
+
+| Comando | Faz |
+|---------|-----|
+| `/start` | Ativa alertas neste chat |
+| `/filtros` | Mostra os filtros |
+| `/tags python react` | Define tecnologias |
+| `/cidades lisboa porto` | Define cidades |
+| `/modo remoto hibrido presencial` | Define o regime de trabalho |
+| `/palavras django` | Palavras no título ou descrição |
+| `/salario 40000` | Salário anual mínimo |
+| `/limpar` | Apaga todos os filtros |
+| `/token` | Gera um novo token de gestão para a API |
+| `/parar` | Cancela os alertas |
+
+Um comando sem valores apaga esse filtro (por exemplo `/tags`).
+
 ## Deploy (Coolify)
 
 1. **DNS**: um registo `A` para o subdomínio da API, apontado ao servidor.
