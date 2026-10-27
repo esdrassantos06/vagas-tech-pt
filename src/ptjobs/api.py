@@ -13,7 +13,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.routing import APIRoute
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import distinct_on
@@ -59,6 +59,51 @@ _HTTP_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
 _http_client = httpx.Client(timeout=10.0)
 MAX_UNVERIFIED_PER_TARGET = 3
 REPOSITORY_URL = "https://github.com/esdrassantos06/vagas-tech-pt"
+
+SUMMARY = "Open source aggregator of tech jobs in Portugal."
+API_GUIDE = """Jobs are scraped from LinkedIn, itjobs.pt and net-empregos,
+normalized and deduplicated across sources.
+
+## Get job alerts
+
+1. `POST /subscriptions` with a channel and optional filters, for example
+   `{"channel": "telegram", "filters": {"tags": ["python"]}}`.
+2. Confirm it:
+   - **Email**: click the link sent to your inbox.
+   - **Discord**: click the link posted through your channel webhook.
+   - **Telegram**: open the returned `deep_link` and press Start.
+3. Keep the `manage_token`. Send it as `Authorization: Bearer <token>` to
+   `/subscriptions/me` to read, update or delete the alert.
+
+New matching jobs arrive as a digest every two hours.
+
+Source code: https://github.com/esdrassantos06/vagas-tech-pt
+"""
+OPENAPI_TAGS = [
+    {
+        "name": "jobs",
+        "description": "Tech jobs from LinkedIn, itjobs.pt and net-empregos.",
+    },
+    {
+        "name": "subscriptions",
+        "description": "Job alerts by email, Discord or Telegram, with opt-in.",
+    },
+    {"name": "meta", "description": "Service information and scraper health."},
+]
+SCALAR_HTML = """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vagas-tech-pt API</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.76.0"></script>
+    <script>Scalar.createApiReference("#app", { url: "/openapi.json" })</script>
+  </body>
+</html>
+"""
 UNVERIFIED_TTL = timedelta(hours=24)
 # Chunked bodies without Content-Length are not counted; the proxy should cap those.
 MAX_BODY_BYTES = 64 * 1024
@@ -77,11 +122,16 @@ def _default_verifier(channel: str, target: str | None, token: str) -> None:
     link = f"{settings.public_base_url}/subscriptions/verify?token={token}"
     if channel == "email" and target:
         notify.send_email(
-            settings, target, "Confirme a subscricao", f"Confirme aqui: {link}"
+            settings,
+            target,
+            "Confirma a tua subscrição de alertas",
+            f"Confirma a tua subscrição de alertas de vagas tech neste link: {link}",
         )
     elif channel == "discord" and target:
         notify.send_discord(
-            target, f"Confirme a subscricao: {link}", client=_http_client
+            target,
+            f"Confirma a tua subscrição de alertas de vagas tech: {link}",
+            client=_http_client,
         )
 
 
@@ -120,7 +170,10 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="vagas-tech-pt",
         version=version("ptjobs"),
-        description="Agregador de vagas tech em Portugal.",
+        summary=SUMMARY,
+        description=API_GUIDE,
+        openapi_tags=OPENAPI_TAGS,
+        docs_url="/swagger",
         responses={
             404: {"model": ErrorResponse},
             422: {"model": ErrorResponse},
@@ -169,14 +222,20 @@ def create_app() -> FastAPI:
             return _error(413, "PAYLOAD_TOO_LARGE", "Request body too large")
         return await call_next(request)
 
+    @app.get("/docs", include_in_schema=False)
+    def scalar_docs() -> HTMLResponse:
+        """Serve the Scalar API reference for the OpenAPI schema."""
+        return HTMLResponse(SCALAR_HTML)
+
     @app.get("/", tags=["meta"])
     def root() -> dict[str, object]:
         """Describe the service and link to its documentation."""
         return {
             "name": app.title,
-            "description": app.description,
+            "description": app.summary,
             "version": app.version,
             "docs": "/docs",
+            "swagger": "/swagger",
             "redoc": "/redoc",
             "openapi": "/openapi.json",
             "health": "/health",
@@ -193,6 +252,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["meta"])
     def health(db: Session = Depends(get_db)) -> JSONResponse:
+        """Report service health; 503 DB_UNAVAILABLE if the database is down."""
         try:
             db.execute(text("SELECT 1"))
         except SQLAlchemyError:
@@ -212,6 +272,10 @@ def create_app() -> FastAPI:
         page: int = Query(default=1, ge=1, le=10_000),
         size: int = Query(default=20, ge=1, le=100),
     ) -> JobPage:
+        """Search active tech jobs (seen in the last 7 days), newest first.
+
+        A posting found on several sources is returned once. Filters combine with
+        AND, and `q` matches the title or company. Paginate with `page` and `size`."""
         window_start = datetime.now(UTC) - ACTIVE_WINDOW
         if since is not None:
             if since.tzinfo is None:
@@ -263,6 +327,7 @@ def create_app() -> FastAPI:
         job_id: int = Path(ge=1, le=INT64_MAX),
         db: Session = Depends(get_db),
     ) -> JobDetail:
+        """Get one job, with `also_on` listing the same posting on other sources."""
         job = db.get(Job, job_id)
         if job is None:
             raise NotFoundError("Job", str(job_id))
@@ -275,6 +340,7 @@ def create_app() -> FastAPI:
 
     @app.get("/sources", response_model=list[SourceStatus], tags=["meta"])
     def list_sources(db: Session = Depends(get_db)) -> list[SourceStatus]:
+        """Latest scrape run per source (ok, empty or failed) to check scrapers."""
         rows = db.scalars(
             select(ScrapeRun)
             .ext(distinct_on(ScrapeRun.source))
@@ -294,6 +360,13 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db),
         verifier: Callable[[str, str | None, str], None] = Depends(get_verifier),
     ) -> SubscriptionCreated:
+        """Create a job alert and return its `manage_token` once.
+
+        - **email**: `target` is your address; a confirmation link is emailed.
+        - **discord**: `target` is a channel webhook URL; the link is posted there.
+        - **telegram**: omit `target`, open the returned `deep_link` and press Start.
+
+        Alerts are only sent after confirmation. Empty filters match every job."""
         target = None if body.channel == "telegram" else body.target
         if target is not None and body.channel == "email":
             target = target.lower()
@@ -336,6 +409,7 @@ def create_app() -> FastAPI:
     def verify_subscription(
         token: str = Query(max_length=128), db: Session = Depends(get_db)
     ) -> dict[str, str]:
+        """Confirm an email or Discord alert with the token from its link."""
         subscription = db.scalar(
             select(Subscription).where(
                 Subscription.verify_token_hash == notify.hash_token(token)
@@ -357,6 +431,7 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db),
         authorization: str | None = Header(default=None),
     ) -> SubscriptionOut:
+        """Read your alert. Send `Authorization: Bearer <manage_token>`."""
         return SubscriptionOut.model_validate(_require_subscription(db, authorization))
 
     @app.patch(
@@ -367,6 +442,7 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db),
         authorization: str | None = Header(default=None),
     ) -> SubscriptionOut:
+        """Replace your alert filters. The target is fixed; create a new alert."""
         subscription = _require_subscription(db, authorization)
         if body.filters is not None:
             subscription.filters = body.filters.model_dump(exclude_defaults=True)
@@ -378,6 +454,7 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db),
         authorization: str | None = Header(default=None),
     ) -> None:
+        """Delete your alert. Send `Authorization: Bearer <manage_token>`."""
         db.delete(_require_subscription(db, authorization))
         db.flush()
 
@@ -385,6 +462,7 @@ def create_app() -> FastAPI:
     def unsubscribe(
         body: UnsubscribeRequest, db: Session = Depends(get_db)
     ) -> dict[str, str]:
+        """Delete an alert using the `manage_token` in the request body."""
         subscription = _subscription_from_token(db, body.token)
         if subscription is None:
             raise NotFoundError("Subscription", "token")
@@ -399,6 +477,7 @@ def create_app() -> FastAPI:
         settings: Settings = Depends(get_settings),
         x_telegram_bot_api_secret_token: str | None = Header(default=None),
     ) -> dict[str, bool]:
+        """Receive Telegram bot updates; only Telegram can call it (secret header)."""
         secret = settings.telegram_webhook_secret
         if not secret or not hmac.compare_digest(
             x_telegram_bot_api_secret_token or "", secret

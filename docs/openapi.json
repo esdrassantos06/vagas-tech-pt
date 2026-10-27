@@ -608,7 +608,8 @@
     }
   },
   "info": {
-    "description": "Agregador de vagas tech em Portugal.",
+    "description": "Jobs are scraped from LinkedIn, itjobs.pt and net-empregos,\nnormalized and deduplicated across sources.\n\n## Get job alerts\n\n1. `POST /subscriptions` with a channel and optional filters, for example\n   `{\"channel\": \"telegram\", \"filters\": {\"tags\": [\"python\"]}}`.\n2. Confirm it:\n   - **Email**: click the link sent to your inbox.\n   - **Discord**: click the link posted through your channel webhook.\n   - **Telegram**: open the returned `deep_link` and press Start.\n3. Keep the `manage_token`. Send it as `Authorization: Bearer <token>` to\n   `/subscriptions/me` to read, update or delete the alert.\n\nNew matching jobs arrive as a digest every two hours.\n\nSource code: https://github.com/esdrassantos06/vagas-tech-pt\n",
+    "summary": "Open source aggregator of tech jobs in Portugal.",
     "title": "vagas-tech-pt",
     "version": "0.1.0"
   },
@@ -670,6 +671,7 @@
     },
     "/health": {
       "get": {
+        "description": "Report service health; 503 DB_UNAVAILABLE if the database is down.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -719,6 +721,7 @@
     },
     "/jobs": {
       "get": {
+        "description": "Search active tech jobs (seen in the last 7 days), newest first.\n\nA posting found on several sources is returned once. Filters combine with\nAND, and `q` matches the title or company. Paginate with `page` and `size`.",
         "operationId": "list_jobs_jobs_get",
         "parameters": [
           {
@@ -925,6 +928,7 @@
     },
     "/jobs/{job_id}": {
       "get": {
+        "description": "Get one job, with `also_on` listing the same posting on other sources.",
         "operationId": "get_job_jobs__job_id__get",
         "parameters": [
           {
@@ -989,6 +993,7 @@
     },
     "/sources": {
       "get": {
+        "description": "Latest scrape run per source (ok, empty or failed) to check scrapers.",
         "operationId": "list_sources_sources_get",
         "responses": {
           "200": {
@@ -1044,6 +1049,7 @@
     },
     "/subscriptions": {
       "post": {
+        "description": "Create a job alert and return its `manage_token` once.\n\n- **email**: `target` is your address; a confirmation link is emailed.\n- **discord**: `target` is a channel webhook URL; the link is posted there.\n- **telegram**: omit `target`, open the returned `deep_link` and press Start.\n\nAlerts are only sent after confirmation. Empty filters match every job.",
         "operationId": "create_subscription_subscriptions_post",
         "requestBody": {
           "content": {
@@ -1105,6 +1111,7 @@
     },
     "/subscriptions/me": {
       "delete": {
+        "description": "Delete your alert. Send `Authorization: Bearer <manage_token>`.",
         "operationId": "delete_me_subscriptions_me_delete",
         "parameters": [
           {
@@ -1165,6 +1172,7 @@
         ]
       },
       "get": {
+        "description": "Read your alert. Send `Authorization: Bearer <manage_token>`.",
         "operationId": "get_me_subscriptions_me_get",
         "parameters": [
           {
@@ -1232,6 +1240,7 @@
         ]
       },
       "patch": {
+        "description": "Replace your alert filters. The target is fixed; create a new alert.",
         "operationId": "update_me_subscriptions_me_patch",
         "parameters": [
           {
@@ -1311,6 +1320,7 @@
     },
     "/subscriptions/unsubscribe": {
       "post": {
+        "description": "Delete an alert using the `manage_token` in the request body.",
         "operationId": "unsubscribe_subscriptions_unsubscribe_post",
         "requestBody": {
           "content": {
@@ -1376,6 +1386,7 @@
     },
     "/subscriptions/verify": {
       "get": {
+        "description": "Confirm an email or Discord alert with the token from its link.",
         "operationId": "verify_subscription_subscriptions_verify_get",
         "parameters": [
           {
@@ -1443,6 +1454,7 @@
     },
     "/telegram/webhook": {
       "post": {
+        "description": "Receive Telegram bot updates; only Telegram can call it (secret header).",
         "operationId": "telegram_webhook_telegram_webhook_post",
         "parameters": [
           {
@@ -1526,5 +1538,19 @@
         ]
       }
     }
-  }
+  },
+  "tags": [
+    {
+      "description": "Tech jobs from LinkedIn, itjobs.pt and net-empregos.",
+      "name": "jobs"
+    },
+    {
+      "description": "Job alerts by email, Discord or Telegram, with opt-in.",
+      "name": "subscriptions"
+    },
+    {
+      "description": "Service information and scraper health.",
+      "name": "meta"
+    }
+  ]
 }

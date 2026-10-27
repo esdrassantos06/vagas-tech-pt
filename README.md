@@ -43,7 +43,7 @@ muda.
 ## Stack
 
 - Python 3.15, [uv](https://docs.astral.sh/uv/)
-- FastAPI + Pydantic v2 (Swagger em `/docs`, OpenAPI em `/openapi.json`)
+- FastAPI + Pydantic v2 (referência [Scalar](https://scalar.com) em `/docs`, Swagger em `/swagger`, OpenAPI em `/openapi.json`)
 - PostgreSQL 18, SQLAlchemy 2, Alembic, psycopg 3
 - httpx, Parsel, Playwright
 - pytest, ruff, mypy (strict)

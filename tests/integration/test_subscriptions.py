@@ -161,3 +161,25 @@ def test_cap_ignores_expired_unverified(client, db_session):
         sub.created_at = old
     db_session.flush()
     assert _create(client).status_code == 202
+
+
+def test_verification_messages_are_proper_portuguese(monkeypatch) -> None:
+    from ptjobs import api, notify
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        notify,
+        "send_email",
+        lambda settings, to, subject, body, **k: sent.append((subject, body)),
+    )
+    monkeypatch.setattr(
+        notify,
+        "send_discord",
+        lambda url, content, **k: sent.append(("discord", content)),
+    )
+    api._default_verifier("email", "a@b.com", "tok")
+    api._default_verifier("discord", "https://discord.com/api/webhooks/1/a", "tok")
+    text = " ".join(part for pair in sent for part in pair)
+    assert "subscrição" in text
+    assert "subscricao" not in text
+    assert "Confirme" not in text
