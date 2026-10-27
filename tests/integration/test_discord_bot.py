@@ -1,4 +1,4 @@
-"""Discord slash commands over HTTP interactions."""
+"""Discord slash commands over HTTP interactions, posting as the bot."""
 
 import json
 import time
@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from ptjobs import discord_bot
+from ptjobs import discord_bot, notify
 from ptjobs.api import create_app, get_db
 from ptjobs.config import Settings, get_settings
 from ptjobs.errors import ChannelError
@@ -18,12 +18,22 @@ from ptjobs.models import Subscription
 
 KEY = Ed25519PrivateKey.generate()
 PUBLIC = KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
-WEBHOOK = "https://discord.com/api/webhooks/9/tok"
+CHANNEL = "111"
 
 
 @pytest.fixture
-def client(db_session, monkeypatch):
-    monkeypatch.setattr(discord_bot, "create_webhook", lambda *a, **k: WEBHOOK)
+def posts(monkeypatch) -> list:
+    sent: list = []
+    monkeypatch.setattr(
+        notify,
+        "send_discord_bot",
+        lambda token, channel, payload, **k: sent.append((token, channel, payload)),
+    )
+    return sent
+
+
+@pytest.fixture
+def client(db_session, posts):
     app = create_app()
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_settings] = lambda: Settings(
@@ -47,7 +57,7 @@ def _post(client, payload: object, *, timestamp: str | None = None, key=KEY):
     )
 
 
-def _command(client, name: str, value: str | None = None, channel: str = "c1"):
+def _command(client, name: str, value: str | None = None, channel: str = CHANNEL):
     options = [{"name": "valores", "type": 3, "value": value}] if value else []
     resp = _post(
         client,
@@ -73,17 +83,29 @@ def test_rejects_bad_or_stale_signatures(client) -> None:
     assert unsigned.status_code == 401
 
 
-def test_alertas_creates_verified_channel_subscription(client, db_session) -> None:
+def test_alertas_creates_verified_channel_subscription(
+    client, db_session, posts
+) -> None:
     assert "Alertas ativos" in _command(client, "alertas")
     sub = db_session.scalars(select(Subscription)).one()
     assert (sub.channel, sub.target, sub.discord_channel_id) == (
         "discord",
-        WEBHOOK,
-        "c1",
+        None,
+        CHANNEL,
     )
     assert sub.verified_at is not None and sub.unsubscribe_token
+    assert [(token, channel) for token, channel, _ in posts] == [("BT", CHANNEL)]
     assert "Já tens alertas" in _command(client, "alertas")
     assert len(db_session.scalars(select(Subscription)).all()) == 1
+
+
+def test_alertas_needs_permission_to_post(client, db_session, monkeypatch) -> None:
+    def denied(*a, **k):
+        raise ChannelError("Discord delivery failed")
+
+    monkeypatch.setattr(notify, "send_discord_bot", denied)
+    assert "Send Messages" in _command(client, "alertas")
+    assert db_session.scalars(select(Subscription)).all() == []
 
 
 def test_filter_commands_reuse_bot_logic(client, db_session) -> None:
@@ -107,49 +129,67 @@ def test_commands_are_admin_only_and_guild_only() -> None:
     assert all(p["contexts"] == [0] for p in payloads)
 
 
-def test_create_webhook_calls_discord_and_hides_token() -> None:
+def test_send_discord_bot_posts_to_channel_and_hides_token() -> None:
     seen = {}
 
     def ok(request: httpx.Request) -> httpx.Response:
         seen.update(url=str(request.url), auth=request.headers["authorization"])
-        return httpx.Response(200, json={"id": "5", "token": "abc"})
+        return httpx.Response(200, json={"id": "1"})
 
-    url = discord_bot.create_webhook(
-        "SECRET", "c1", client=httpx.Client(transport=httpx.MockTransport(ok))
+    notify.send_discord_bot(
+        "SECRET",
+        CHANNEL,
+        {"content": "x"},
+        client=httpx.Client(transport=httpx.MockTransport(ok)),
     )
-    assert url == "https://discord.com/api/webhooks/5/abc"
     assert seen == {
-        "url": "https://discord.com/api/v10/channels/c1/webhooks",
+        "url": f"https://discord.com/api/v10/channels/{CHANNEL}/messages",
         "auth": "Bot SECRET",
     }
     denied = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(403)))
     with pytest.raises(ChannelError) as exc:
-        discord_bot.create_webhook("SECRET", "c1", client=denied)
+        notify.send_discord_bot("SECRET", CHANNEL, {"content": "x"}, client=denied)
     assert "SECRET" not in str(exc.value) and exc.value.__suppress_context__
+    with pytest.raises(ChannelError):
+        notify.send_discord_bot("SECRET", "../users/@me", {}, client=denied)
+
+
+def test_digest_for_bot_subscription_posts_as_bot() -> None:
+    from ptjobs.digest import Digest
+
+    seen = {}
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda r: seen.update(url=str(r.url)) or httpx.Response(200, json={})
+        )
+    )
+    deliver = notify.build_deliver(Settings(discord_bot_token="BT"), client)
+    sub = Subscription(
+        channel="discord",
+        target=None,
+        discord_channel_id=CHANNEL,
+        filters={},
+        manage_token_hash="h",
+    )
+    deliver(sub, Digest(jobs=[], remaining=0, jobs_url="j", unsubscribe_url="u"))
+    assert seen["url"].endswith(f"/channels/{CHANNEL}/messages")
 
 
 def test_signed_non_object_body_is_rejected(client) -> None:
     assert _post(client, [1, 2]).status_code == 422
 
 
-def test_parar_also_deletes_the_channel_webhook(client, monkeypatch) -> None:
-    deleted: list[str] = []
-    monkeypatch.setattr(
-        discord_bot, "delete_webhook", lambda url, **k: deleted.append(url)
-    )
-    _command(client, "alertas")
-    _command(client, "parar")
-    assert deleted == [WEBHOOK]
-
-
-def test_delete_webhook_is_best_effort_and_only_for_discord() -> None:
-    calls: list[str] = []
+def test_register_commands_overwrites_global_commands() -> None:
+    seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(f"{request.method} {request.url}")
-        return httpx.Response(500)
+        seen.update(method=request.method, url=str(request.url))
+        return httpx.Response(200, json=[])
 
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    discord_bot.delete_webhook(WEBHOOK, client=client)
-    discord_bot.delete_webhook("https://evil.example/x", client=client)
-    assert calls == [f"DELETE {WEBHOOK}"]
+    discord_bot.register_commands(
+        "APP", "BT", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    assert seen == {
+        "method": "PUT",
+        "url": "https://discord.com/api/v10/applications/APP/commands",
+    }

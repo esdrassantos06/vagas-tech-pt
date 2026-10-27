@@ -136,8 +136,8 @@ do Discord, ou carrega em `/start` no bot do Telegram.
 
 ### Discord
 
-Com o bot, um admin do servidor escreve `/alertas` num canal: o bot cria lá um
-webhook e ativa os alertas. Depois `/tags`, `/cidades`, `/modo`, `/nivel`,
+Com o bot, um admin do servidor escreve `/alertas` num canal e as vagas passam a
+ser publicadas lá pelo próprio bot. Depois `/tags`, `/cidades`, `/modo`, `/nivel`,
 `/palavras`, `/salario`, `/filtros`, `/limpar`, `/token` e `/parar` funcionam
 como no Telegram (com `+`/`-`). Os comandos só aparecem a quem tem a permissão
 Gerir Servidor e as respostas só são vistas por quem os usou.
@@ -147,8 +147,7 @@ Configurar o bot:
 1. No [Discord Developer Portal](https://discord.com/developers/applications),
    cria a aplicação e guarda Application ID, Public Key e o token do bot.
 2. Em Installation, Guild Install com `applications.commands` e `bot`, e as
-   permissões Manage Webhooks, Send Messages e Embed Links. Adiciona o bot ao
-   servidor.
+   permissões Send Messages e Embed Links. Adiciona o bot ao servidor.
 3. Configura `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY` e
    `DISCORD_BOT_TOKEN`, faz deploy e define o Interactions Endpoint URL como
    `https://<dominio>/discord/interactions`.

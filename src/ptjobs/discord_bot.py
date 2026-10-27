@@ -1,12 +1,12 @@
 """Discord bot: slash commands received as signed HTTP interactions.
 
-/alertas creates a webhook in the channel and a verified subscription for it;
-the other commands reuse the Telegram bot's filter logic on that channel.
+/alertas creates a verified subscription for the channel, and digests are
+posted there as the bot; the other commands reuse the Telegram bot's filter
+logic on that channel.
 """
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import Any
 
@@ -21,7 +21,6 @@ from ptjobs.config import Settings
 from ptjobs.errors import ChannelError
 from ptjobs.models import Subscription
 
-logger = logging.getLogger(__name__)
 API = "https://discord.com/api/v10"
 MAX_CLOCK_SKEW = 300
 _PING, _PONG, _REPLY, _EPHEMERAL = 1, 1, 4, 64
@@ -46,10 +45,14 @@ WELCOME = (
     "Usa /tags, /cidades, /modo, /nivel, /palavras e /salario para filtrar."
 )
 ALREADY_ACTIVE = "Já tens alertas ativos neste canal. Vê-os com /filtros."
-NO_WEBHOOK = (
-    "Não consegui criar o webhook. Dá ao bot a permissão Gerir Webhooks "
-    "neste canal e tenta outra vez."
+NO_ACCESS = (
+    "Não consigo escrever neste canal. Dá ao bot as permissões Send Messages "
+    "e Embed Links aqui e tenta outra vez."
 )
+ANNOUNCEMENT = {
+    "content": "As novas vagas tech vão ser publicadas neste canal.",
+    "allowed_mentions": {"parse": []},
+}
 
 
 def verify(
@@ -97,50 +100,16 @@ def command_payloads() -> list[dict[str, Any]]:
     ]
 
 
-def _discord(
-    method: str, url: str, bot_token: str, client: httpx.Client, **kw: Any
-) -> Any:
-    try:
-        response = client.request(
-            method, url, headers={"Authorization": f"Bot {bot_token}"}, **kw
-        )
-        response.raise_for_status()
-    except httpx.HTTPError:
-        raise ChannelError("Discord API request failed") from None
-    return response.json()
-
-
 def register_commands(app_id: str, bot_token: str, *, client: httpx.Client) -> None:
     """Replace the application's global slash commands with COMMANDS."""
-    _discord(
-        "PUT",
-        f"{API}/applications/{app_id}/commands",
-        bot_token,
-        client,
-        json=command_payloads(),
-    )
-
-
-def create_webhook(bot_token: str, channel_id: str, *, client: httpx.Client) -> str:
-    """Create a webhook in a channel and return its URL."""
-    hook = _discord(
-        "POST",
-        f"{API}/channels/{channel_id}/webhooks",
-        bot_token,
-        client,
-        json={"name": "Vagas Tech PT"},
-    )
-    return f"https://discord.com/api/webhooks/{hook['id']}/{hook['token']}"
-
-
-def delete_webhook(url: str, *, client: httpx.Client) -> None:
-    """Best-effort removal of a Discord webhook the bot created."""
-    if not notify.validate_discord_webhook(url):
-        return
     try:
-        client.delete(url).raise_for_status()
+        client.put(
+            f"{API}/applications/{app_id}/commands",
+            headers={"Authorization": f"Bot {bot_token}"},
+            json=command_payloads(),
+        ).raise_for_status()
     except httpx.HTTPError:
-        logger.warning("could not delete a Discord webhook")
+        raise ChannelError("Discord command registration failed") from None
 
 
 def handle(
@@ -173,9 +142,6 @@ def handle(
             )
             or "Comando desconhecido."
         )
-        if parsed[0] == "parar":
-            for subscription in subscriptions:
-                delete_webhook(subscription.target or "", client=client)
     return {
         "type": _REPLY,
         "data": {
@@ -203,13 +169,15 @@ def _start(
     if _channel_subscriptions(db, channel_id):
         return ALREADY_ACTIVE
     try:
-        url = create_webhook(settings.discord_bot_token, channel_id, client=client)
+        notify.send_discord_bot(
+            settings.discord_bot_token, channel_id, ANNOUNCEMENT, client=client
+        )
     except ChannelError:
-        return NO_WEBHOOK
+        return NO_ACCESS
     db.add(
         Subscription(
             channel="discord",
-            target=url,
+            target=None,
             discord_channel_id=channel_id,
             filters={},
             manage_token_hash=notify.hash_token(notify.new_token()),
