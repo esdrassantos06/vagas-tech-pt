@@ -1,4 +1,4 @@
-FROM python:3.15-slim AS builder
+FROM python:3.15-slim AS deps
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /uvx /bin/
 
@@ -10,6 +10,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
+
+FROM deps AS builder
+
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
@@ -21,14 +24,17 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
-COPY --from=builder /app /app
 
+# Browser and system packages depend only on the lockfile, so this heavy layer
+# stays cached across code-only deploys.
+COPY --from=deps /app/.venv /app/.venv
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     && playwright install --with-deps chromium \
-    && useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app /ms-playwright
+    && useradd --create-home --uid 10001 appuser
+
+COPY --from=builder --chown=appuser:appuser /app /app
 USER appuser
 
 EXPOSE 8000
