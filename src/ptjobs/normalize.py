@@ -70,7 +70,18 @@ _TAG_ALIASES: dict[str, str] = {
     "flask": "flask",
     "fastapi": "fastapi",
     "spring": "spring",
+    "next.js": "nextjs",
+    "nextjs": "nextjs",
+    "nest.js": "nestjs",
+    "nestjs": "nestjs",
+    "react native": "react-native",
+    "react-native": "react-native",
+    "tailwind": "tailwind",
+    "tailwindcss": "tailwind",
 }
+_TAG_SHORTHANDS = {"go": "golang", "next": "nextjs", "nest": "nestjs"}
+KNOWN_TAGS = frozenset(_TAG_ALIASES.values()) | {"golang"}
+KNOWN_CITIES = frozenset(_CITY_ALIASES.values())
 
 
 def _alias_pattern(key: str) -> re.Pattern[str]:
@@ -183,6 +194,12 @@ def normalize_tags(text: str | None) -> list[str]:
     found = {canon for pattern, canon in _TAG_PATTERNS if pattern.search(low)}
     found |= {canon for pattern, canon in _TAG_SPECIALS if pattern.search(low)}
     return sorted(found)
+
+
+def canonical_tag(raw: str) -> str:
+    """Map a user-typed tag (e.g. "Next", "node.js") to its canonical form."""
+    key = _WS.sub(" ", raw.strip().lower())
+    return _TAG_ALIASES.get(key) or _TAG_SHORTHANDS.get(key) or key
 
 
 def normalize_title(raw: str | None) -> str:

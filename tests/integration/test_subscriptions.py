@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -64,20 +66,35 @@ def test_verify_rejects_telegram(client, db_session):
     resp = _create(client, channel="telegram", target=None)
     token = resp.json()["deep_link"].split("start=")[1]
     assert (
-        client.get("/subscriptions/verify", params={"token": token}).status_code == 422
+        client.post("/subscriptions/verify", params={"token": token}).status_code == 422
     )
 
 
 def test_verify_marks_verified(client, db_session, recorder):
     _create(client)
     token = recorder[0][2]
-    resp = client.get("/subscriptions/verify", params={"token": token})
+    resp = client.post("/subscriptions/verify", params={"token": token})
     assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
     db_session.expire_all()
     assert db_session.query(Subscription).one().verified_at is not None
 
 
+def test_verify_get_only_shows_confirm_form(client, db_session, recorder):
+    """Link previews (Discord, mail scanners) must not consume the token."""
+    _create(client)
+    token = recorder[0][2]
+    for _ in range(2):
+        page = client.get("/subscriptions/verify", params={"token": token})
+        assert page.status_code == 200 and "<form" in page.text
+    db_session.expire_all()
+    assert db_session.query(Subscription).one().verified_at is None
+
+
 def test_verify_bad_token_404(client):
+    resp = client.post("/subscriptions/verify", params={"token": "nope"})
+    assert resp.status_code == 404
+    assert "text/html" in resp.headers["content-type"]
     assert (
         client.get("/subscriptions/verify", params={"token": "nope"}).status_code == 404
     )
@@ -112,7 +129,7 @@ def test_patch_updates_filters(client, db_session):
     )
     assert resp.status_code == 200
     db_session.expire_all()
-    assert db_session.query(Subscription).one().filters == {"tags": ["go"]}
+    assert db_session.query(Subscription).one().filters == {"tags": ["golang"]}
 
 
 def test_patch_cannot_change_target(client, db_session):
@@ -175,7 +192,9 @@ def test_verification_messages_are_proper_portuguese(monkeypatch) -> None:
     monkeypatch.setattr(
         notify,
         "send_discord",
-        lambda url, content, **k: sent.append(("discord", content)),
+        lambda url, content, **k: sent.append(
+            ("discord", json.dumps(content, ensure_ascii=False))
+        ),
     )
     api._default_verifier("email", "a@b.com", "tok")
     api._default_verifier("discord", "https://discord.com/api/webhooks/1/a", "tok")

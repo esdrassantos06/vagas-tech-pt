@@ -53,7 +53,7 @@ def test_digest_delivers_new_matching_jobs(db_session) -> None:
 
     assert sent == 1
     assert len(delivered) == 1
-    assert "Python Developer" in delivered[0][1]
+    assert "Python Developer" in delivered[0][1].jobs[0].title
     db_session.refresh(sub)
     assert sub.last_notified_at is not None
 
@@ -105,12 +105,13 @@ def test_discord_digest_respects_channel_limit(db_session) -> None:
             fingerprint=f"{i:040d}",
         )
     _sub(db_session)
-    bodies: list[str] = []
+    digests: list = []
     run_digest(
         db_session,
-        deliver=lambda s, body: bodies.append(body),
+        deliver=lambda s, digest: digests.append(digest),
         jobs_url="https://v/jobs",
     )
-    assert len(bodies) == 1
-    assert len(bodies[0]) <= 2000
-    assert "e mais" in bodies[0]
+    assert len(digests) == 1
+    assert len(digests[0].jobs) == 10
+    assert digests[0].remaining == 70
+    assert digests[0].jobs_url == "https://v/jobs"

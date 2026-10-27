@@ -317,6 +317,24 @@
         "title": "JobSummary",
         "type": "object"
       },
+      "RecoverRequest": {
+        "description": "Request body to email a new manage token to an email alert.",
+        "properties": {
+          "email": {
+            "examples": [
+              "dev@example.com"
+            ],
+            "maxLength": 500,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "RecoverRequest",
+        "type": "object"
+      },
       "SourceStatus": {
         "description": "The most recent scrape run for a source.",
         "properties": {
@@ -1318,6 +1336,72 @@
         ]
       }
     },
+    "/subscriptions/recover": {
+      "post": {
+        "description": "Email a new manage token to a verified email alert.\n\nThe answer is the same whether or not the address is subscribed, the\nemail is sent after the response, and each alert can recover once per\nhour. The old token stops working.",
+        "operationId": "recover_token_subscriptions_recover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Recover Token Subscriptions Recover Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Recover Token",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
     "/subscriptions/unsubscribe": {
       "post": {
         "description": "Delete an alert using the `manage_token` in the request body.",
@@ -1384,10 +1468,136 @@
         ]
       }
     },
+    "/subscriptions/unsubscribe/{token}": {
+      "get": {
+        "description": "Show the cancel button for the unsubscribe link sent in every digest.",
+        "operationId": "unsubscribe_page_subscriptions_unsubscribe__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Unsubscribe Page",
+        "tags": [
+          "subscriptions"
+        ]
+      },
+      "post": {
+        "description": "Delete the alert behind an unsubscribe link (also RFC 8058 one-click).\n\nAlways answers with the same page so tokens cannot be probed.",
+        "operationId": "unsubscribe_by_link_subscriptions_unsubscribe__token__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Unsubscribe By Link",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
     "/subscriptions/verify": {
       "get": {
-        "description": "Confirm an email or Discord alert with the token from its link.",
-        "operationId": "verify_subscription_subscriptions_verify_get",
+        "description": "Show the confirmation button for an email or Discord alert.\n\nOpening the link changes nothing, so link previews and mail scanners\ncannot confirm a subscription; the button POSTs to the same URL.",
+        "operationId": "verify_page_subscriptions_verify_get",
         "parameters": [
           {
             "in": "query",
@@ -1403,13 +1613,9 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Verify Subscription Subscriptions Verify Get",
-                  "type": "object"
+                  "type": "string"
                 }
               }
             },
@@ -1417,7 +1623,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
@@ -1427,7 +1633,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "text/html": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
@@ -1437,7 +1643,69 @@
           },
           "500": {
             "content": {
-              "application/json": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Verify Page",
+        "tags": [
+          "subscriptions"
+        ]
+      },
+      "post": {
+        "description": "Confirm an email or Discord alert with the token from its link.",
+        "operationId": "verify_subscription_subscriptions_verify_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "text/html": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }

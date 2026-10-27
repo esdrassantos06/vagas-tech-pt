@@ -106,6 +106,9 @@ class Subscription(Base):
             name="ck_subscriptions_channel",
         ),
         Index("ix_subscriptions_verified_at", "verified_at"),
+        UniqueConstraint(
+            "unsubscribe_token", name="uq_subscriptions_unsubscribe_token"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -120,6 +123,8 @@ class Subscription(Base):
     verify_token_hash: Mapped[str | None] = mapped_column(Text)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    unsubscribe_token: Mapped[str | None] = mapped_column(Text)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
