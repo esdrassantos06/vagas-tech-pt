@@ -84,6 +84,8 @@ class TestDiscordValidation:
             ("https://discord.com.evil.com/api/webhooks/1/a", False),
             ("https://discord.com/not-a-webhook", False),
             ("ftp://discord.com/api/webhooks/1/a", False),
+            ("https://discord.com/api/webhooks/1/a?x=1", False),
+            ("https://discord.com/api/webhooks/1/a#frag", False),
         ],
     )
     def test_validation(self, url: str, ok: bool) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hmac
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,7 +12,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import SQLAlchemyError
@@ -37,12 +37,14 @@ from ptjobs.schemas import (
     JobDetail,
     JobPage,
     JobSummary,
+    Source,
     SourceStatus,
     SubscriptionCreate,
     SubscriptionCreated,
     SubscriptionOut,
     SubscriptionUpdate,
     UnsubscribeRequest,
+    WorkMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,8 @@ _HTTP_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
 _http_client = httpx.Client(timeout=10.0)
 MAX_UNVERIFIED_PER_TARGET = 3
 UNVERIFIED_TTL = timedelta(hours=24)
+# Chunked bodies without Content-Length are not counted; the proxy should cap those.
+MAX_BODY_BYTES = 64 * 1024
 
 Verifier = "Callable[[str, str | None, str], None]"
 
@@ -137,6 +141,16 @@ def create_app() -> FastAPI:
         logger.exception("unhandled error")
         return _error(500, "INTERNAL_ERROR", "An unexpected error occurred")
 
+    @app.middleware("http")
+    async def _limit_body_size(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Reject bodies whose declared Content-Length exceeds MAX_BODY_BYTES."""
+        length = request.headers.get("content-length", "")
+        if length.isdigit() and int(length) > MAX_BODY_BYTES:
+            return _error(413, "PAYLOAD_TOO_LARGE", "Request body too large")
+        return await call_next(request)
+
     @app.get("/health", tags=["meta"])
     def health(db: Session = Depends(get_db)) -> JSONResponse:
         try:
@@ -150,10 +164,10 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db),
         q: str | None = Query(default=None, max_length=100),
         city: str | None = Query(default=None, max_length=100),
-        work_mode: str | None = None,
+        work_mode: WorkMode | None = None,
         tag: str | None = Query(default=None, max_length=50),
         min_salary: int | None = Query(default=None, ge=0, le=INT32_MAX),
-        source: str | None = Query(default=None, max_length=50),
+        source: Source | None = None,
         since: datetime | None = None,
         page: int = Query(default=1, ge=1, le=10_000),
         size: int = Query(default=20, ge=1, le=100),
@@ -166,7 +180,7 @@ def create_app() -> FastAPI:
         conditions = [Job.last_seen_at >= window_start]
         if source:
             conditions.append(Job.source == source)
-        if city:
+        if city := _strip_nul(city):
             conditions.append(Job.city == city)
         if work_mode:
             conditions.append(Job.work_mode == work_mode)
@@ -280,7 +294,7 @@ def create_app() -> FastAPI:
 
     @app.get("/subscriptions/verify", tags=["subscriptions"])
     def verify_subscription(
-        token: str, db: Session = Depends(get_db)
+        token: str = Query(max_length=128), db: Session = Depends(get_db)
     ) -> dict[str, str]:
         subscription = db.scalar(
             select(Subscription).where(

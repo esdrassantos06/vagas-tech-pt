@@ -69,12 +69,18 @@ def job_matches(job: Job, filters: dict[str, Any]) -> bool:
 
 
 def validate_discord_webhook(url: str) -> bool:
-    """Return True only for an https discord.com/discordapp.com webhook URL."""
+    """Return True only for a plain https discord.com/discordapp.com webhook URL.
+
+    Query strings and fragments are rejected so one webhook cannot be registered
+    under many distinct targets.
+    """
     parsed = urlparse(url)
     return (
         parsed.scheme == "https"
         and parsed.hostname in _DISCORD_HOSTS
         and parsed.path.startswith("/api/webhooks/")
+        and not parsed.query
+        and not parsed.fragment
     )
 
 
