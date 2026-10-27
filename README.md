@@ -115,7 +115,7 @@ opcionais.
 
 | Variável | Obrigatória | Para quê |
 |----------|-------------|----------|
-| `DATABASE_URL` | sim | Postgres, no formato `postgresql+psycopg://user:pass@host:5432/db` |
+| `DATABASE_URL` | sim | Postgres (`postgres://`, `postgresql://` ou `postgresql+psycopg://`) |
 | `PUBLIC_BASE_URL` | sim | URL público da API, usado nos links de confirmação (`https` em produção) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | para email | Conta de onde os emails saem |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | para Telegram | O bot do serviço |
@@ -173,8 +173,9 @@ fica associado e verificado.
 3. **App**: New Resource, Public Repository
    `https://github.com/esdrassantos06/vagas-tech-pt`, branch `main`, build pack
    **Dockerfile**, porta `8000`, o teu domínio em Domains.
-4. **Variáveis**: pelo menos `DATABASE_URL` e `PUBLIC_BASE_URL`. O URL interno
-   que o Coolify dá começa por `postgres://`: troca por `postgresql+psycopg://`.
+4. **Variáveis**: pelo menos `DATABASE_URL` e `PUBLIC_BASE_URL`. Podes colar o
+   URL interno do Coolify tal como vem (`postgres://...`): a app converte-o para
+   o driver psycopg.
 5. **Healthcheck**: path `/health`, porta `8000`.
 6. **Deploy**. O entrypoint corre `alembic upgrade head` antes do `uvicorn`.
 7. **Scheduled Task**: comando `python -m ptjobs run`, cron `0 */2 * * *`. Dá

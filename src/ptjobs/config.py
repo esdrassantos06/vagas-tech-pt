@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
 
     admin_discord_webhook: str = ""
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg_driver(cls, value: str) -> str:
+        """Rewrite postgres:// and postgresql:// URLs to the psycopg 3 driver."""
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return "postgresql+psycopg://" + value.removeprefix(prefix)
+        return value
 
 
 @lru_cache

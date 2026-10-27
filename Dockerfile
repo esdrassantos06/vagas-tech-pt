@@ -23,7 +23,10 @@ ENV PATH="/app/.venv/bin:$PATH" \
 WORKDIR /app
 COPY --from=builder /app /app
 
-RUN playwright install --with-deps chromium \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && playwright install --with-deps chromium \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app /ms-playwright
 USER appuser
