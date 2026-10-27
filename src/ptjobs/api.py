@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ptjobs import notify
+from ptjobs import notify, telegram_bot
 from ptjobs.config import Settings, get_settings
 from ptjobs.db import session_scope
 from ptjobs.errors import (
@@ -485,34 +485,15 @@ def create_app() -> FastAPI:
             raise UnauthorizedError("Invalid webhook secret")
         message = update.get("message") or {}
         text = str(message.get("text") or "")
-        if text.startswith("/start "):
-            token = text.split(" ", 1)[1].strip()
-            chat_id = str((message.get("chat") or {}).get("id"))
-            subscription = db.scalar(
-                select(Subscription).where(
-                    Subscription.verify_token_hash == notify.hash_token(token)
-                )
+        chat_id = (message.get("chat") or {}).get("id")
+        if chat_id is not None and text.startswith("/"):
+            reply = telegram_bot.handle(
+                db, str(chat_id), text, base_url=settings.public_base_url
             )
-            if subscription is not None:
-                subscription.target = chat_id
-                subscription.verified_at = func.now()
-                subscription.verify_token_hash = None
-                db.flush()
-            _reply_telegram(
-                settings,
-                chat_id,
-                _TELEGRAM_CONFIRMED if subscription else _TELEGRAM_INVALID,
-            )
+            _reply_telegram(settings, str(chat_id), reply)
         return {"ok": True}
 
     return app
-
-
-_TELEGRAM_CONFIRMED = (
-    "Subscrição confirmada. Vais receber aqui as novas vagas tech que batem "
-    "com os teus filtros."
-)
-_TELEGRAM_INVALID = "Link inválido ou já utilizado. Cria uma nova subscrição."
 
 
 def _reply_telegram(settings: Settings, chat_id: str, text: str) -> None:
