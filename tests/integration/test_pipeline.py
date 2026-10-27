@@ -72,24 +72,24 @@ def test_run_source_failure_marks_failed_and_alerts(db_session) -> None:
     assert db_session.scalar(select(func.count()).select_from(ScrapeRun)) == 1
 
 
-def test_run_source_drops_non_tech_netempregos_jobs(db_session) -> None:
+def test_net_empregos_it_feeds_keep_untagged_jobs(db_session) -> None:
     def fetch() -> list[RawJob]:
         return [
             RawJob(
                 source="net_empregos",
                 external_id="9",
                 url="https://www.net-empregos.com/9/x/",
-                title="Cozinheiro",
-                company="Restaurante",
+                title="Programador ABAP",
+                company="Consultora",
                 location_raw="Porto",
-                description="Cozinha tradicional portuguesa.",
+                description="Projetos SAP para clientes.",
             )
         ]
 
     run = run_source("net_empregos", fetch, session=db_session)
-    assert db_session.scalar(select(func.count()).select_from(Job)) == 0
+    assert db_session.scalar(select(func.count()).select_from(Job)) == 1
     assert run.jobs_found == 1
-    assert run.jobs_new == 0
+    assert run.jobs_new == 1
 
 
 def test_run_source_dedups_within_batch(db_session) -> None:

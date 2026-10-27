@@ -83,8 +83,17 @@ _TAG_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
     (_alias_pattern(key), canon) for key, canon in _TAG_ALIASES.items()
 )
 
+# "Go" is also a common word and brand name ("Go Fitness", "Pingo Doce & Go"),
+# so it only counts as golang next to programming words.
 _TAG_SPECIALS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?<![a-z])go(?:lang)?(?![a-z])(?!\s*-?\s*to\b)"), "golang"),
+    (
+        re.compile(
+            r"(?<![a-z])golang(?![a-z])"
+            r"|(?<![a-z])go(?=\s+(?:developer|engineer|programmer|backend|dev)\b)"
+            r"|(?<=\bem )go(?![a-z])|(?<=\bin )go(?![a-z])"
+        ),
+        "golang",
+    ),
 )
 
 
@@ -131,7 +140,7 @@ def parse_salary(raw: str | None) -> tuple[int | None, int | None]:
     """
     if not raw:
         return (None, None)
-    text = raw.lower()
+    text = raw.lower().replace("\xa0", " ")
     norm = _strip_accents(text)
     if ("$" in text or "usd" in norm) and "eur" not in norm and "€" not in text:
         return (None, None)

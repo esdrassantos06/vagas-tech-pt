@@ -33,8 +33,10 @@ def parse(html_text: str) -> list[RawJob]:
         match = _ID_RE.search(href or "")
         if not href or not title or not match:
             continue
-        details = item.css("div.list-details ::text").getall()
-        location = next((t.strip() for t in details if t.strip()), None)
+        details = [t.strip() for t in item.css("div.list-details ::text").getall()]
+        details = [t for t in details if t]
+        salary = next((t for t in details if "€" in t), None)
+        extra = " ".join(t for t in details[1:] if t != salary)
         jobs.append(
             RawJob(
                 source=SOURCE,
@@ -42,7 +44,9 @@ def parse(html_text: str) -> list[RawJob]:
                 url=urljoin(BASE_URL, href),
                 title=title.strip(),
                 company=(item.css("div.list-name a::text").get() or "").strip(),
-                location_raw=location,
+                location_raw=details[0] if details else None,
+                description=extra or None,
+                salary_raw=salary,
             )
         )
     if not jobs:

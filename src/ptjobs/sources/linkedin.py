@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 from parsel import Selector
@@ -18,6 +19,7 @@ GUEST_SEARCH_URL = (
     "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 )
 DEFAULT_LOCATION = "Portugal"
+PAGE_SIZE = 10
 
 
 def parse(html_text: str) -> list[RawJob]:
@@ -40,6 +42,7 @@ def parse(html_text: str) -> list[RawJob]:
             continue
         company = card.css("h4.base-search-card__subtitle a::text").get()
         location = card.css("span.job-search-card__location::text").get()
+        posted = card.css("time::attr(datetime)").get()
         jobs.append(
             RawJob(
                 source=SOURCE,
@@ -48,6 +51,7 @@ def parse(html_text: str) -> list[RawJob]:
                 title=title.strip(),
                 company=(company or "").strip(),
                 location_raw=(location or "").strip() or None,
+                published_at=_parse_date(posted),
             )
         )
     if not jobs:
@@ -78,25 +82,47 @@ def fetch_html(url: str, *, timeout_ms: int = 20000) -> str:
         raise SourceError(f"{SOURCE}: browser fetch failed for {url}") from exc
 
 
+def _parse_date(value: str | None) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=UTC) if value else None
+    except ValueError:
+        return None
+
+
 def fetch(
     keywords: Iterable[str],
     *,
     location: str = DEFAULT_LOCATION,
     html_fetcher: Callable[[str], str] = fetch_html,
     pause_seconds: float = 3.0,
+    max_pages: int = 3,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[RawJob]:
-    """Fetch and parse LinkedIn guest cards for each keyword, politely paced."""
-    collected: list[RawJob] = []
-    last_error: ParseError | None = None
-    for index, keyword in enumerate(keywords):
-        if index > 0:
-            sleep(pause_seconds)
-        html_text = html_fetcher(search_url(keyword, location=location))
-        try:
-            collected.extend(parse(html_text))
-        except ParseError as exc:
-            last_error = exc
+    """Fetch LinkedIn guest cards for each keyword, paging until a short page.
+
+    A failure on one keyword (blocked page, network error, no cards) is
+    recorded and the next keyword continues; the last error is raised only
+    when no keyword produced any job.
+    """
+    collected: dict[str, RawJob] = {}
+    last_error: ParseError | SourceError | None = None
+    first_request = True
+    for keyword in keywords:
+        for page in range(max_pages):
+            if not first_request:
+                sleep(pause_seconds)
+            first_request = False
+            url = search_url(keyword, location=location, start=page * PAGE_SIZE)
+            try:
+                jobs = parse(html_fetcher(url))
+            except (ParseError, SourceError) as exc:
+                if page == 0:
+                    last_error = exc
+                break
+            for job in jobs:
+                collected.setdefault(job.external_id, job)
+            if len(jobs) < PAGE_SIZE:
+                break
     if last_error is not None and not collected:
         raise last_error
-    return collected
+    return list(collected.values())

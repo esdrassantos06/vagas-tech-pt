@@ -66,7 +66,7 @@ def test_linkedin_fetch_uses_injected_fetcher_and_paces() -> None:
         sleep=slept.append,
     )
 
-    assert len(jobs) == 4
+    assert len(jobs) == 2
     assert len(calls) == 2
     assert slept == [3.0]
 

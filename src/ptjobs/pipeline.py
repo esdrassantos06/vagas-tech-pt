@@ -16,7 +16,7 @@ from ptjobs.sources.base import RawJob
 
 logger = logging.getLogger(__name__)
 
-TECH_ONLY_SOURCES = frozenset({"itjobs", "linkedin"})
+TECH_ONLY_SOURCES = frozenset({"itjobs", "linkedin", "net_empregos"})
 _MUTABLE_COLUMNS = (
     "url",
     "title",
