@@ -452,3 +452,20 @@ Running the first deploy surfaced six issues. Each became a failing test first
 | 6 | Swagger's generated example sent `min_salary: 0`, silently excluding jobs without salary | `min_salary: 0` means no filter; explicit request example without it | `test_min_salary_zero_means_no_filter`, `test_subscription_example_has_no_min_salary` |
 
 GREEN: 183 passed, 93% coverage, ruff clean, mypy strict clean.
+
+## Security review and pen test follow-ups
+
+- **Correction to the M6 record above:** `test_send_telegram_error_hides_bot_token`
+  was listed as passing but was never actually added (a text replace silently
+  matched nothing after reformatting). It now exists, and it exposed a real leak:
+  `ChannelError` was raised `from` the httpx error, whose message contains the
+  full URL including the bot token, and `logger.exception` printed that chain.
+  Senders now raise `from None`, and the `httpx` logger is pinned to WARNING so
+  request URLs are never logged. (`test_send_telegram_error_hides_bot_token`,
+  `test_failed_delivery_traceback_never_contains_bot_token`,
+  `test_discord_error_hides_webhook_url`, `test_httpx_request_urls_are_not_logged_at_info`)
+- Baseline security headers (HSTS, nosniff, DENY framing, no-referrer) on every
+  response; uvicorn no longer sends a `Server` header. (`test_security_headers_present`)
+- `certifi` bumped past PYSEC-2026-4320 (found by pip-audit).
+- CI installs only the Chromium headless shell, without apt packages, following
+  the Playwright docs; the Docker image drops the full browser (2.47 GB to 1.86 GB).

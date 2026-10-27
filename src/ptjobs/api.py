@@ -62,6 +62,12 @@ REPOSITORY_URL = "https://github.com/esdrassantos06/vagas-tech-pt"
 UNVERIFIED_TTL = timedelta(hours=24)
 # Chunked bodies without Content-Length are not counted; the proxy should cap those.
 MAX_BODY_BYTES = 64 * 1024
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
 
 Verifier = "Callable[[str, str | None, str], None]"
 
@@ -143,6 +149,15 @@ def create_app() -> FastAPI:
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
         logger.exception("unhandled error")
         return _error(500, "INTERNAL_ERROR", "An unexpected error occurred")
+
+    @app.middleware("http")
+    async def _security_headers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Add baseline security headers to every response."""
+        response = await call_next(request)
+        response.headers.update(SECURITY_HEADERS)
+        return response
 
     @app.middleware("http")
     async def _limit_body_size(

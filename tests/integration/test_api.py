@@ -241,3 +241,11 @@ def test_root_describes_the_service(client) -> None:
     assert body["repository"] == "https://github.com/esdrassantos06/vagas-tech-pt"
     assert body["sources"] == ["linkedin", "itjobs", "net_empregos"]
     assert "/jobs" in body["endpoints"]
+
+
+def test_security_headers_present(client) -> None:
+    headers = client.get("/health").headers
+    assert headers["x-content-type-options"] == "nosniff"
+    assert headers["x-frame-options"] == "DENY"
+    assert headers["referrer-policy"] == "no-referrer"
+    assert "max-age=" in headers["strict-transport-security"]

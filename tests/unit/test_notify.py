@@ -264,3 +264,48 @@ class TestDigestLimits:
         )
         assert body.count("\n- ") == 2
         assert "e mais" not in body
+
+
+def test_send_telegram_error_hides_bot_token() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401)))
+    with pytest.raises(ChannelError) as exc:
+        send_telegram("123:SECRETTOKEN", "1", "hi", client=client)
+    assert "SECRETTOKEN" not in str(exc.value)
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__ is True
+
+
+def test_failed_delivery_traceback_never_contains_bot_token() -> None:
+    import traceback
+
+    from ptjobs.config import Settings
+    from ptjobs.models import Subscription
+    from ptjobs.notify import build_deliver
+
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(403)))
+    deliver = build_deliver(Settings(telegram_bot_token="123:SECRETTOKEN"), client)
+    sub = Subscription(
+        channel="telegram", target="1", filters={}, manage_token_hash="h"
+    )
+    with pytest.raises(ChannelError) as exc:
+        deliver(sub, "body")
+    assert "SECRETTOKEN" not in "".join(traceback.format_exception(exc.value))
+
+
+def test_discord_error_hides_webhook_url() -> None:
+    import traceback
+
+    secret = "SECRET" + "WEBHOOK"
+    url = f"https://discord.com/api/webhooks/1/{secret}"
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    with pytest.raises(ChannelError) as exc:
+        send_discord(url, "x", client=client)
+    assert secret not in "".join(traceback.format_exception(exc.value))
+
+
+def test_httpx_request_urls_are_not_logged_at_info() -> None:
+    import logging
+
+    import ptjobs.notify  # noqa: F401
+
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING

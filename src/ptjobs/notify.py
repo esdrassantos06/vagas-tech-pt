@@ -95,9 +95,9 @@ def send_discord(webhook_url: str, content: str, *, client: httpx.Client) -> Non
     except httpx.HTTPStatusError as exc:
         raise ChannelError(
             f"Discord delivery failed: HTTP {exc.response.status_code}"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise ChannelError("Discord delivery failed") from exc
+        ) from None
+    except httpx.HTTPError:
+        raise ChannelError("Discord delivery failed") from None
 
 
 def send_telegram(
@@ -111,12 +111,14 @@ def send_telegram(
     except httpx.HTTPStatusError as exc:
         raise ChannelError(
             f"Telegram delivery failed: HTTP {exc.response.status_code}"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise ChannelError("Telegram delivery failed") from exc
+        ) from None
+    except httpx.HTTPError:
+        raise ChannelError("Telegram delivery failed") from None
 
 
 logger = logging.getLogger(__name__)
+# Bot tokens and webhook secrets live in request URLs; never let httpx log them.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 ACTIVE_WINDOW = timedelta(days=7)
 Deliver = Callable[[Subscription, str], None]
 SmtpFactory = Callable[[str, int], SMTP]
@@ -142,8 +144,8 @@ def send_email(
             if settings.smtp_user:
                 smtp.login(settings.smtp_user, settings.smtp_password)
             smtp.send_message(message)
-    except (OSError, SMTPException, ValueError) as exc:
-        raise ChannelError("Email delivery failed") from exc
+    except OSError, SMTPException, ValueError:
+        raise ChannelError("Email delivery failed") from None
 
 
 CHANNEL_MAX_CHARS = {"discord": 2000, "telegram": 4096, "email": 20000}
