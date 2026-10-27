@@ -36,13 +36,12 @@ def _scrapers(client: httpx.Client) -> dict[str, object]:
 
 
 def run_scrape(sources: list[str] | None = None) -> None:
-    """Scrape the given sources (all by default) and persist their jobs and runs."""
+    """Scrape the given sources (all by default), committing each one separately."""
     settings = get_settings()
     with httpx.Client(timeout=20.0, follow_redirects=True) as client:
         scrapers = _scrapers(client)
-        selected = sources or list(scrapers)
-        with session_scope() as session:
-            for name in selected:
+        for name in sources or list(scrapers):
+            with session_scope() as session:
                 run_source(
                     name,
                     scrapers[name],  # type: ignore[arg-type]
@@ -57,7 +56,9 @@ def run_notify() -> None:
     with httpx.Client(timeout=20.0) as client:
         deliver = build_deliver(settings, client)
         with session_scope() as session:
-            run_digest(session, deliver=deliver)
+            run_digest(
+                session, deliver=deliver, jobs_url=f"{settings.public_base_url}/jobs"
+            )
 
 
 def _cmd_openapi(_: argparse.Namespace) -> int:

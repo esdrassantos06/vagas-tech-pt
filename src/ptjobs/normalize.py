@@ -34,6 +34,7 @@ _LEGAL_SUFFIX = re.compile(
 )
 _SENIORITY = re.compile(r"\b(?:senior|junior|mid|pleno|lead)\b[-\s]*")
 _WS = re.compile(r"\s+")
+_MARKUP = re.compile(r"<[^>]+>|https?://\S+|www\.\S+", re.IGNORECASE)
 _FP_SEP = "\x00"
 
 _TAG_ALIASES: dict[str, str] = {
@@ -169,7 +170,7 @@ def normalize_tags(text: str | None) -> list[str]:
     """Extract canonical tech tags found in free text, sorted and unique."""
     if not text:
         return []
-    low = text.lower()
+    low = _MARKUP.sub(" ", text).lower()
     found = {canon for pattern, canon in _TAG_PATTERNS if pattern.search(low)}
     found |= {canon for pattern, canon in _TAG_SPECIALS if pattern.search(low)}
     return sorted(found)

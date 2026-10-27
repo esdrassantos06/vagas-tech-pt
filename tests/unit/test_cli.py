@@ -40,3 +40,24 @@ def test_unknown_source_rejected(monkeypatch) -> None:
 
     with pytest.raises(SystemExit):
         cli.main(["scrape", "--source", "bogus"])
+
+
+def test_scrape_commits_each_source_separately(monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    scopes: list[int] = []
+
+    @contextmanager
+    def fake_scope():
+        scopes.append(1)
+        yield object()
+
+    monkeypatch.setattr(cli, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        cli, "run_source", lambda name, fetcher, *, session, alert: None
+    )
+    monkeypatch.setattr(
+        cli, "_scrapers", lambda client: {"itjobs": None, "net_empregos": None}
+    )
+    cli.run_scrape(["itjobs", "net_empregos"])
+    assert len(scopes) == 2

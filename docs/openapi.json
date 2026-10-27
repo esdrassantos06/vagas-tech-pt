@@ -379,6 +379,16 @@
       },
       "SubscriptionCreate": {
         "description": "Request body to create a subscription.",
+        "examples": [
+          {
+            "channel": "telegram",
+            "filters": {
+              "tags": [
+                "python"
+              ]
+            }
+          }
+        ],
         "properties": {
           "channel": {
             "enum": [

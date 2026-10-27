@@ -24,6 +24,7 @@ from ptjobs.config import Settings, get_settings
 from ptjobs.db import session_scope
 from ptjobs.errors import (
     AppError,
+    ChannelError,
     NotFoundError,
     RateLimitError,
     UnauthorizedError,
@@ -353,19 +354,44 @@ def create_app() -> FastAPI:
         text = str(message.get("text") or "")
         if text.startswith("/start "):
             token = text.split(" ", 1)[1].strip()
+            chat_id = str((message.get("chat") or {}).get("id"))
             subscription = db.scalar(
                 select(Subscription).where(
                     Subscription.verify_token_hash == notify.hash_token(token)
                 )
             )
             if subscription is not None:
-                subscription.target = str((message.get("chat") or {}).get("id"))
+                subscription.target = chat_id
                 subscription.verified_at = func.now()
                 subscription.verify_token_hash = None
                 db.flush()
+            _reply_telegram(
+                settings,
+                chat_id,
+                _TELEGRAM_CONFIRMED if subscription else _TELEGRAM_INVALID,
+            )
         return {"ok": True}
 
     return app
+
+
+_TELEGRAM_CONFIRMED = (
+    "Subscrição confirmada. Vais receber aqui as novas vagas tech que batem "
+    "com os teus filtros."
+)
+_TELEGRAM_INVALID = "Link inválido ou já utilizado. Cria uma nova subscrição."
+
+
+def _reply_telegram(settings: Settings, chat_id: str, text: str) -> None:
+    """Best-effort bot reply; a failure must not make Telegram retry the update."""
+    if not settings.telegram_bot_token:
+        return
+    try:
+        notify.send_telegram(
+            settings.telegram_bot_token, chat_id, text, client=_http_client
+        )
+    except ChannelError:
+        logger.exception("telegram reply failed")
 
 
 def _require_subscription(db: Session, authorization: str | None) -> Subscription:

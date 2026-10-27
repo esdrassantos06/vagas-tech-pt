@@ -231,3 +231,34 @@ class TestBuildDeliver:
         deliver = build_deliver(Settings(), client)
         with pytest.raises(ChannelError):
             deliver(self._sub("discord", None), "body")
+
+
+def test_min_salary_zero_means_no_filter() -> None:
+    assert job_matches(_job(salary_max=None), {"min_salary": 0}) is True
+
+
+class TestDigestLimits:
+    def _jobs(self, n: int) -> list[Job]:
+        return [
+            _job(title=f"Senior Python Developer number {i}", url=f"https://x/{i}")
+            for i in range(n)
+        ]
+
+    def test_fits_within_max_chars_and_reports_rest(self) -> None:
+        from ptjobs.notify import format_digest
+
+        jobs = self._jobs(100)
+        body = format_digest(jobs, max_chars=500, more_url="https://site/jobs")
+        shown = body.count("\n- ")
+        assert len(body) <= 500
+        assert 0 < shown < 100
+        assert f"e mais {100 - shown} vaga(s): https://site/jobs" in body
+
+    def test_no_footer_when_everything_fits(self) -> None:
+        from ptjobs.notify import format_digest
+
+        body = format_digest(
+            self._jobs(2), max_chars=4000, more_url="https://site/jobs"
+        )
+        assert body.count("\n- ") == 2
+        assert "e mais" not in body

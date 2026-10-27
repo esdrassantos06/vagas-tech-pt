@@ -76,3 +76,13 @@ def test_net_empregos_parse_bytes_honors_declaration() -> None:
     raw = (FIXTURES / "net_empregos" / "listing.xml").read_bytes()
     jobs = net_empregos.parse(raw)
     assert "Água" in jobs[0].title
+
+
+def test_net_empregos_decodes_windows_1252_euro() -> None:
+    xml = (
+        '<?xml version="1.0" encoding="iso-8859-1"?>'
+        "<rss><channel><item><title>Estágio (180\x80/mês)</title>"
+        "<link>https://www.net-empregos.com/1/x/</link></item></channel></rss>"
+    ).encode("latin-1")
+    jobs = net_empregos.parse(xml)
+    assert "180€/mês" in jobs[0].title

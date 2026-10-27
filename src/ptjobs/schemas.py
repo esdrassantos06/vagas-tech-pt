@@ -98,6 +98,12 @@ class SubscriptionFilters(BaseModel):
 class SubscriptionCreate(BaseModel):
     """Request body to create a subscription."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"channel": "telegram", "filters": {"tags": ["python"]}}]
+        }
+    )
+
     channel: Literal["email", "discord", "telegram"]
     target: str | None = None
     filters: SubscriptionFilters = Field(default_factory=SubscriptionFilters)

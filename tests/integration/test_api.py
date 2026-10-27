@@ -220,3 +220,9 @@ def test_since_cannot_resurrect_stale_jobs(client, db_session) -> None:
     )
     since = (datetime.now(UTC) - timedelta(days=60)).isoformat()
     assert client.get("/jobs", params={"since": since}).json()["total"] == 0
+
+
+def test_subscription_example_has_no_min_salary() -> None:
+    schema = create_app().openapi()["components"]["schemas"]["SubscriptionCreate"]
+    example = schema["examples"][0]
+    assert "min_salary" not in example["filters"]

@@ -436,3 +436,19 @@ docker-build. CD publishes to GHCR and pings the Coolify webhook. Canary runs
 Docker image verified locally: builds, runs as non-root (appuser), bundles
 chromium, and serves the full OpenAPI (9 paths). Fixed a .dockerignore that
 excluded README.md (needed by the hatchling build).
+
+## Post-launch fixes (found in production)
+
+Running the first deploy surfaced six issues. Each became a failing test first
+(10 RED), then was fixed.
+
+| # | Problem in production | Fix | Test |
+|---|-----------------------|-----|------|
+| 1 | 983 non-tech net-empregos jobs passed the tech filter: the `.net` alias matched `www.net-empregos.com` in every item's link | Strip HTML tags and URLs before tag extraction | `TestTagsIgnoreMarkup` |
+| 2 | Euro sign lost ("180?/mes"): the feed declares iso-8859-1 but is windows-1252 | Decode feed bytes as cp1252 | `test_net_empregos_decodes_windows_1252_euro` |
+| 3 | Digest had no size cap; Telegram (4096) and Discord (2000) reject longer messages, so the watermark never advanced | Per-channel `max_chars` with an "e mais N vaga(s)" link to `/jobs` | `TestDigestLimits`, `test_discord_digest_respects_channel_limit` |
+| 4 | One transaction for all sources: a crash in one source discarded the others | Commit each source separately | `test_scrape_commits_each_source_separately` |
+| 5 | The bot stayed silent after `/start`, so users could not tell it worked | Best-effort confirmation or "invalid link" reply; failures never break the webhook | `test_start_replies_with_confirmation`, `test_unknown_token_replies_invalid_link`, `test_reply_failure_still_verifies_and_returns_200` |
+| 6 | Swagger's generated example sent `min_salary: 0`, silently excluding jobs without salary | `min_salary: 0` means no filter; explicit request example without it | `test_min_salary_zero_means_no_filter`, `test_subscription_example_has_no_min_salary` |
+
+GREEN: 183 passed, 93% coverage, ruff clean, mypy strict clean.
