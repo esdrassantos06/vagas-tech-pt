@@ -62,6 +62,12 @@ class ChannelError(AppError):
     status = 502
 
 
+class DestinationGoneError(ChannelError):
+    """The destination no longer exists or the bot lost access for good."""
+
+    code = "DESTINATION_GONE"
+
+
 class RateLimitError(AppError):
     """Too many requests for a resource or target."""
 

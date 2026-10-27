@@ -115,3 +115,18 @@ def test_discord_digest_respects_channel_limit(db_session) -> None:
     assert len(digests[0].jobs) == 10
     assert digests[0].remaining == 70
     assert digests[0].jobs_url == "https://v/jobs"
+
+
+def test_gone_destination_removes_the_subscription(db_session) -> None:
+    from sqlalchemy import select
+
+    from ptjobs.errors import DestinationGoneError
+
+    _job(db_session)
+    _sub(db_session)
+
+    def gone(s, digest):
+        raise DestinationGoneError("Discord channel is gone")
+
+    assert run_digest(db_session, deliver=gone) == 0
+    assert db_session.scalars(select(Subscription)).all() == []

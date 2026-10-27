@@ -143,7 +143,8 @@ Com o bot, um admin do servidor escreve `/alertas` num canal e as vagas passam a
 ser publicadas lá pelo próprio bot. Depois `/tags`, `/cidades`, `/modo`, `/nivel`,
 `/palavras`, `/salario`, `/filtros`, `/limpar`, `/token` e `/parar` funcionam
 como no Telegram (com `+`/`-`). Os comandos só aparecem a quem tem a permissão
-Gerir Servidor e as respostas só são vistas por quem os usou.
+Gerir Servidor e as respostas só são vistas por quem os usou. Se o bot for
+expulso ou o canal apagado, a subscrição é removida no envio seguinte.
 
 Configurar o bot:
 
