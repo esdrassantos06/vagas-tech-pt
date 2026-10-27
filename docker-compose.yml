@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ptjobs
+      POSTGRES_PASSWORD: ptjobs
+      POSTGRES_DB: ptjobs
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptjobs"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
