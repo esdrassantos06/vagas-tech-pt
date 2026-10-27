@@ -25,7 +25,7 @@ from ptjobs.digest import (
     render_telegram,
     render_text,
 )
-from ptjobs.errors import ChannelError
+from ptjobs.errors import ChannelError, DestinationGoneError
 from ptjobs.models import Job, Subscription
 
 _DISCORD_HOSTS = frozenset({"discord.com", "discordapp.com"})
@@ -96,6 +96,21 @@ def validate_discord_webhook(url: str) -> bool:
     )
 
 
+# Unknown Channel, Unknown Webhook, Missing Access (bot removed or cannot view).
+_DISCORD_GONE_CODES = frozenset({10003, 10015, 50001})
+
+
+def _discord_failure(response: httpx.Response) -> ChannelError:
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    code = body.get("code") if isinstance(body, dict) else None
+    if response.status_code == 404 or code in _DISCORD_GONE_CODES:
+        return DestinationGoneError("Discord destination is gone")
+    return ChannelError(f"Discord delivery failed: HTTP {response.status_code}")
+
+
 def send_discord(
     webhook_url: str, message: str | dict[str, Any], *, client: httpx.Client
 ) -> None:
@@ -114,9 +129,7 @@ def send_discord(
         response = client.post(webhook_url, json=payload)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        raise ChannelError(
-            f"Discord delivery failed: HTTP {exc.response.status_code}"
-        ) from None
+        raise _discord_failure(exc.response) from None
     except httpx.HTTPError:
         raise ChannelError("Discord delivery failed") from None
 
@@ -139,9 +152,7 @@ def send_discord_bot(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        raise ChannelError(
-            f"Discord delivery failed: HTTP {exc.response.status_code}"
-        ) from None
+        raise _discord_failure(exc.response) from None
     except httpx.HTTPError:
         raise ChannelError("Discord delivery failed") from None
 
@@ -252,8 +263,9 @@ def run_digest(
     """Deliver one digest per verified subscription with new matching jobs.
 
     The watermark (last_notified_at) advances only after a successful delivery,
-    so a channel failure leaves the subscription to retry on the next run.
-    Returns the number of digests delivered.
+    so a channel failure leaves the subscription to retry on the next run. A
+    destination that is gone for good (deleted channel or webhook, bot removed)
+    deletes the subscription. Returns the number of digests delivered.
     """
     now = now or datetime.now(UTC)
     subscriptions = session.scalars(
@@ -276,6 +288,13 @@ def run_digest(
         )
         try:
             deliver(subscription, digest)
+        except DestinationGoneError:
+            logger.warning(
+                "removing subscription %s: destination gone", subscription.id
+            )
+            session.delete(subscription)
+            session.flush()
+            continue
         except ChannelError:
             logger.exception("digest delivery failed for %s", subscription.id)
             continue
