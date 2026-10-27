@@ -55,7 +55,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen --all-extras
-      - run: uv run playwright install --with-deps chromium
+      - run: uv run playwright install --only-shell chromium
       - run: uv run pytest
 
   openapi-drift:

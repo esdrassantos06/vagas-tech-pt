@@ -31,7 +31,7 @@ COPY --from=deps /app/.venv /app/.venv
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && playwright install --with-deps chromium \
+    && playwright install --with-deps --only-shell chromium \
     && useradd --create-home --uid 10001 appuser
 
 COPY --from=builder --chown=appuser:appuser /app /app
