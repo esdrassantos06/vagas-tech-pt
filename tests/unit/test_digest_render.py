@@ -15,6 +15,7 @@ JOBS_URL = "https://v.example/jobs"
 
 def _job(i: int = 1, **over) -> Job:
     base = {
+        "source": "itjobs",
         "title": f"Senior Python Developer {i}",
         "company": "Feedzai",
         "city": "lisboa",
@@ -134,3 +135,23 @@ def test_verification_message_for_discord_is_an_embed() -> None:
     payload = render_discord_verification("https://v/subscriptions/verify?token=t")
     assert payload["embeds"][0]["url"] == "https://v/subscriptions/verify?token=t"
     assert payload["allowed_mentions"] == {"parse": []}
+
+
+def test_email_html_is_robust_across_clients() -> None:
+    html = render_email_html(_digest([_job(1), _job(2, company="Sword")], remaining=3))
+    assert '<meta charset="utf-8">' in html
+    assert 'name="color-scheme" content="light dark"' in html
+    assert "prefers-color-scheme: dark" in html
+    assert 'bgcolor="' in html
+    assert "5 vagas novas: Feedzai, Sword e mais." in html
+    assert "itjobs.pt" in html
+
+
+def test_verification_email_has_copyable_fallback_link() -> None:
+    from ptjobs.digest import render_verification_email
+
+    link = "https://v/subscriptions/verify?token=a&b"
+    text, html = render_verification_email(link)
+    assert link in text
+    assert html.count("https://v/subscriptions/verify?token=a&amp;b") == 3
+    assert '<meta charset="utf-8">' in html
