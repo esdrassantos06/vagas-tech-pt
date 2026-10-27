@@ -249,3 +249,35 @@ def test_security_headers_present(client) -> None:
     assert headers["x-frame-options"] == "DENY"
     assert headers["referrer-policy"] == "no-referrer"
     assert "max-age=" in headers["strict-transport-security"]
+
+
+def test_jobs_filter_by_seniority(client, db_session) -> None:
+    _job(db_session, external_id="1", seniority="junior", fingerprint="a" * 40)
+    _job(db_session, external_id="2", seniority="senior", fingerprint="b" * 40)
+    body = client.get("/jobs", params={"seniority": "junior"}).json()
+    assert [item["seniority"] for item in body["items"]] == ["junior"]
+    assert client.get("/jobs", params={"seniority": "boss"}).status_code == 422
+
+
+def test_subscription_accepts_seniorities(client) -> None:
+    from ptjobs.api import get_verifier
+
+    client.app.dependency_overrides[get_verifier] = lambda: lambda c, t, tok: None
+    ok = client.post(
+        "/subscriptions",
+        json={
+            "channel": "discord",
+            "target": "https://discord.com/api/webhooks/1/a",
+            "filters": {"seniorities": ["junior"]},
+        },
+    )
+    assert ok.status_code == 202
+    bad = client.post(
+        "/subscriptions",
+        json={
+            "channel": "discord",
+            "target": "https://discord.com/api/webhooks/1/b",
+            "filters": {"seniorities": ["boss"]},
+        },
+    )
+    assert bad.status_code == 422

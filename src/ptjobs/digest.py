@@ -15,6 +15,13 @@ from ptjobs.models import Job
 ACCENT = "#3ddc97"
 TELEGRAM_MAX_CHARS = 4096
 _TELEGRAM_FOOTER = "/filtros para ajustar · /parar para cancelar"
+_SENIORITIES = {
+    "intern": "Estágio",
+    "junior": "Júnior",
+    "mid": "Mid",
+    "senior": "Sénior",
+    "lead": "Lead",
+}
 _WORK_MODES = {"remote": "Remoto", "hybrid": "Híbrido", "onsite": "Presencial"}
 
 
@@ -30,6 +37,8 @@ class Digest:
 
 def _meta(job: Job) -> str:
     parts = [job.company]
+    if job.seniority in _SENIORITIES:
+        parts.append(_SENIORITIES[job.seniority])
     if job.city:
         parts.append(job.city.title())
     if job.work_mode in _WORK_MODES:

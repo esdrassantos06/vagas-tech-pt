@@ -39,6 +39,7 @@ from ptjobs.schemas import (
     JobPage,
     JobSummary,
     RecoverRequest,
+    Seniority,
     Source,
     SourceStatus,
     SubscriptionCreate,
@@ -299,6 +300,7 @@ def create_app() -> FastAPI:
         q: str | None = Query(default=None, max_length=100),
         city: str | None = Query(default=None, max_length=100),
         work_mode: WorkMode | None = None,
+        seniority: Seniority | None = None,
         tag: str | None = Query(default=None, max_length=50),
         min_salary: int | None = Query(default=None, ge=0, le=INT32_MAX),
         source: Source | None = None,
@@ -322,6 +324,8 @@ def create_app() -> FastAPI:
             conditions.append(Job.city == city)
         if work_mode:
             conditions.append(Job.work_mode == work_mode)
+        if seniority:
+            conditions.append(Job.seniority == seniority)
         if tag := _strip_nul(tag):
             conditions.append(Job.tags.contains([tag]))
         if min_salary is not None:
