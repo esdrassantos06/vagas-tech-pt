@@ -6,6 +6,7 @@ import hmac
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from typing import Any
 
 import httpx
@@ -13,6 +14,7 @@ from fastapi import Depends, FastAPI, Header, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import SQLAlchemyError
@@ -30,7 +32,7 @@ from ptjobs.errors import (
     UnauthorizedError,
     ValidationError,
 )
-from ptjobs.models import INT32_MAX, Job, ScrapeRun, Subscription
+from ptjobs.models import INT32_MAX, SOURCES, Job, ScrapeRun, Subscription
 from ptjobs.schemas import (
     ErrorResponse,
     JobAlsoOn,
@@ -56,6 +58,7 @@ _HTTP_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
 
 _http_client = httpx.Client(timeout=10.0)
 MAX_UNVERIFIED_PER_TARGET = 3
+REPOSITORY_URL = "https://github.com/esdrassantos06/vagas-tech-pt"
 UNVERIFIED_TTL = timedelta(hours=24)
 # Chunked bodies without Content-Length are not counted; the proxy should cap those.
 MAX_BODY_BYTES = 64 * 1024
@@ -110,7 +113,7 @@ def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     app = FastAPI(
         title="vagas-tech-pt",
-        version="0.1.0",
+        version=version("ptjobs"),
         description="Agregador de vagas tech em Portugal.",
         responses={
             404: {"model": ErrorResponse},
@@ -150,6 +153,28 @@ def create_app() -> FastAPI:
         if length.isdigit() and int(length) > MAX_BODY_BYTES:
             return _error(413, "PAYLOAD_TOO_LARGE", "Request body too large")
         return await call_next(request)
+
+    @app.get("/", tags=["meta"])
+    def root() -> dict[str, object]:
+        """Describe the service and link to its documentation."""
+        return {
+            "name": app.title,
+            "description": app.description,
+            "version": app.version,
+            "docs": "/docs",
+            "redoc": "/redoc",
+            "openapi": "/openapi.json",
+            "health": "/health",
+            "repository": REPOSITORY_URL,
+            "sources": list(SOURCES),
+            "endpoints": sorted(
+                {
+                    route.path
+                    for route in app.routes
+                    if isinstance(route, APIRoute) and route.path != "/"
+                }
+            ),
+        }
 
     @app.get("/health", tags=["meta"])
     def health(db: Session = Depends(get_db)) -> JSONResponse:
