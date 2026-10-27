@@ -144,7 +144,7 @@ são aceites URLs `https://discord.com/api/webhooks/...`.
 SMTP_HOST=smtp.resend.com
 SMTP_PORT=587
 SMTP_USER=resend
-SMTP_PASSWORD=re_xxxxxxxx
+SMTP_PASSWORD=<resend-api-key>
 SMTP_FROM=alertas@o-teu-dominio.com
 ```
 
