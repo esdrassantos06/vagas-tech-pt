@@ -37,6 +37,7 @@ TagTerm = Annotated[FilterTerm, AfterValidator(canonical_tag)]
 Target = Annotated[str, StringConstraints(max_length=500), AfterValidator(_reject_nul)]
 Token = Annotated[str, StringConstraints(max_length=128), AfterValidator(_reject_nul)]
 WorkMode = Literal["onsite", "hybrid", "remote", "unknown"]
+Seniority = Literal["intern", "junior", "mid", "senior", "lead"]
 Source = Literal["linkedin", "itjobs", "net_empregos"]
 
 
@@ -66,6 +67,7 @@ class JobSummary(BaseModel):
     company: str
     city: str | None
     work_mode: str
+    seniority: str
     salary_min: int | None
     salary_max: int | None
     tags: list[str]
@@ -120,6 +122,7 @@ class SubscriptionFilters(BaseModel):
     cities: list[FilterTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
     work_modes: list[WorkMode] = Field(default_factory=list, max_length=4)
     tags: list[TagTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
+    seniorities: list[Seniority] = Field(default_factory=list, max_length=5)
     min_salary: int | None = Field(default=None, ge=0, le=INT32_MAX)
 
     @field_validator("keywords", "cities", "tags")

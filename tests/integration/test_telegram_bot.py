@@ -142,3 +142,19 @@ def test_commands_need_a_subscription(db_session) -> None:
 
 def test_unknown_command_shows_help(db_session) -> None:
     assert "/tags" in _say(db_session, "/xpto")
+
+
+def test_nivel_sets_seniorities_with_shorthands(db_session) -> None:
+    _say(db_session, "/start")
+    _say(db_session, "/nivel jr pleno")
+    assert _subs(db_session)[0].filters == {"seniorities": ["junior", "mid"]}
+    _say(db_session, "/nivel +senior -jr")
+    assert _subs(db_session)[0].filters == {"seniorities": ["mid", "senior"]}
+    assert "Nível: mid, senior" in _say(db_session, "/filtros")
+
+
+def test_nivel_rejects_unknown_level(db_session) -> None:
+    _say(db_session, "/start")
+    reply = _say(db_session, "/nivel chefe")
+    assert "junior" in reply and "senior" in reply
+    assert _subs(db_session)[0].filters == {}

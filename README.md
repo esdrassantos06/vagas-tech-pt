@@ -96,7 +96,7 @@ python -m ptjobs run                     # scrape + notify
 | POST | `/subscriptions/recover` | Envia um novo manage token para um alerta de email (1 vez por hora) |
 | POST | `/telegram/webhook` | Webhook do bot de Telegram |
 
-Filtros de `/jobs`: `q`, `city`, `work_mode`, `tag`, `min_salary`, `source`,
+Filtros de `/jobs`: `q`, `city`, `work_mode`, `seniority`, `tag`, `min_salary`, `source`,
 `since`, `page`, `size`.
 
 Exemplo de subscrição:
@@ -105,7 +105,7 @@ Exemplo de subscrição:
 {
   "channel": "discord",
   "target": "https://discord.com/api/webhooks/123/abc",
-  "filters": { "tags": ["python"], "cities": ["lisboa"], "work_modes": ["remote"] }
+  "filters": { "tags": ["python"], "cities": ["lisboa"], "work_modes": ["remote"], "seniorities": ["junior", "mid"] }
 }
 ```
 
@@ -182,6 +182,7 @@ Também dá para gerir tudo só pelo bot, sem usar a API:
 | `/tags +go -react` | Adiciona ou remove sem apagar o resto |
 | `/cidades lisboa porto` | Define cidades |
 | `/modo remoto hibrido presencial` | Define o regime de trabalho |
+| `/nivel junior mid` | Define o nível (estagio, junior, mid, senior, lead) |
 | `/palavras django` | Palavras no título ou descrição |
 | `/salario 40000` | Salário anual mínimo |
 | `/limpar` | Apaga todos os filtros |
@@ -189,7 +190,11 @@ Também dá para gerir tudo só pelo bot, sem usar a API:
 | `/parar` | Cancela os alertas |
 
 Um comando sem valores apaga esse filtro (por exemplo `/tags`). O `+`/`-`
-funciona em `/tags`, `/cidades`, `/modo` e `/palavras`.
+funciona em `/tags`, `/cidades`, `/modo`, `/nivel` e `/palavras`.
+
+O nível é detetado pelo título da vaga (por exemplo "Junior", "Pleno",
+"Sénior", "Estágio", "Tech Lead"). Com o filtro de nível ativo, vagas sem nível
+no título não são enviadas.
 
 ## Deploy (Coolify)
 

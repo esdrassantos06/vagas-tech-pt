@@ -119,3 +119,12 @@ def test_run_source_db_error_records_failed_run_and_alerts(db_session) -> None:
     assert len(alerts) == 1
     assert db_session.scalar(select(func.count()).select_from(ScrapeRun)) == 1
     assert db_session.scalar(select(func.count()).select_from(Job)) == 0
+
+
+def test_run_source_detects_seniority(db_session) -> None:
+    run_source(
+        "itjobs",
+        lambda: [_raw("1", title="Junior Python Developer")],
+        session=db_session,
+    )
+    assert db_session.scalars(select(Job)).one().seniority == "junior"

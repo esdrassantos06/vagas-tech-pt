@@ -23,6 +23,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 INT32_MAX = 2**31 - 1
 SOURCES = ("linkedin", "itjobs", "net_empregos")
 WORK_MODES = ("onsite", "hybrid", "remote", "unknown")
+SENIORITIES = ("intern", "junior", "mid", "senior", "lead", "unknown")
 RUN_STATUSES = ("ok", "empty", "failed")
 CHANNELS = ("email", "discord", "telegram")
 
@@ -45,6 +46,10 @@ class Job(Base):
             "work_mode IN ('onsite', 'hybrid', 'remote', 'unknown')",
             name="ck_jobs_work_mode",
         ),
+        CheckConstraint(
+            "seniority IN ('intern', 'junior', 'mid', 'senior', 'lead', 'unknown')",
+            name="ck_jobs_seniority",
+        ),
         Index("ix_jobs_fingerprint", "fingerprint"),
         Index("ix_jobs_first_seen_at", "first_seen_at"),
         Index("ix_jobs_tags", "tags", postgresql_using="gin"),
@@ -59,6 +64,9 @@ class Job(Base):
     location_raw: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text)
     work_mode: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
+    seniority: Mapped[str] = mapped_column(
+        Text, nullable=False, default="unknown", server_default="unknown"
+    )
     salary_min: Mapped[int | None] = mapped_column(Integer)
     salary_max: Mapped[int | None] = mapped_column(Integer)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)

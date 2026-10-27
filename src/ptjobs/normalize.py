@@ -36,6 +36,13 @@ _SENIORITY = re.compile(r"\b(?:senior|junior|mid|pleno|lead)\b[-\s]*")
 _WS = re.compile(r"\s+")
 _MARKUP = re.compile(r"<[^>]+>|https?://\S+|www\.\S+", re.IGNORECASE)
 _FP_SEP = "\x00"
+_SENIORITY_LEVELS = re.compile(
+    r"\b(?:(?P<intern>estagi\w*|intern(?:ship)?|trainee)"
+    r"|(?P<junior>junior|jr|entry[- ]level)"
+    r"|(?P<mid>mid(?:[- ]level)?|pleno|intermedi(?:o|a|ate))"
+    r"|(?P<senior>senior|sr)"
+    r"|(?P<lead>lead|principal|staff|head of))\b"
+)
 
 _TAG_ALIASES: dict[str, str] = {
     "python": "python",
@@ -200,6 +207,15 @@ def canonical_tag(raw: str) -> str:
     """Map a user-typed tag (e.g. "Next", "node.js") to its canonical form."""
     key = _WS.sub(" ", raw.strip().lower())
     return _TAG_ALIASES.get(key) or _TAG_SHORTHANDS.get(key) or key
+
+
+def normalize_seniority(title: str | None) -> str:
+    """Classify a job title as intern, junior, mid, senior, lead, or unknown.
+
+    The first level word in the title wins ("Senior Tech Lead" is senior).
+    """
+    match = _SENIORITY_LEVELS.search(_clean(title))
+    return match.lastgroup or "unknown" if match else "unknown"
 
 
 def normalize_title(raw: str | None) -> str:

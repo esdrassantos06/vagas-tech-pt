@@ -46,8 +46,8 @@ def job_matches(job: Job, filters: dict[str, Any]) -> bool:
     """Return True if a job satisfies every non-empty filter dimension.
 
     Dimensions are ANDed; values within a dimension are ORed. Recognized keys:
-    keywords, cities, work_modes, tags (lists), and min_salary (int; 0 means no
-    filter). An empty or missing filter set matches every job.
+    keywords, cities, work_modes, tags, seniorities (lists), and min_salary
+    (int; 0 means no filter). An empty or missing filter set matches every job.
     """
     keywords = filters.get("keywords")
     if keywords:
@@ -67,6 +67,10 @@ def job_matches(job: Job, filters: dict[str, Any]) -> bool:
 
     tags = filters.get("tags")
     if tags and not (set(job.tags) & set(tags)):
+        return False
+
+    seniorities = filters.get("seniorities")
+    if seniorities and job.seniority not in seniorities:
         return False
 
     min_salary = filters.get("min_salary")

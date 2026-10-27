@@ -25,13 +25,14 @@ HELP = (
     "/tags +go -react - adicionar ou remover\n"
     "/cidades lisboa porto - cidades\n"
     "/modo remoto hibrido presencial - regime de trabalho\n"
+    "/nivel junior mid - nível (estagio, junior, mid, senior, lead)\n"
     "/palavras django - palavras no título ou descrição\n"
     "/salario 40000 - salário anual mínimo\n"
     "/limpar - apagar todos os filtros\n"
     "/token - novo token de gestão para a API\n"
     "/parar - cancelar os alertas\n\n"
     "Um comando sem valores apaga esse filtro, por exemplo /tags. "
-    "Usa + e - em /tags, /cidades, /modo e /palavras para editar sem "
+    "Usa + e - em /tags, /cidades, /modo, /nivel e /palavras para editar sem "
     "apagar o resto."
 )
 WELCOME = "Alertas ativos. Sem filtros recebes todas as vagas tech.\n\n" + HELP
@@ -51,14 +52,20 @@ _LIST_FILTERS = {
     "tags": "tags",
     "cidades": "cities",
     "modo": "work_modes",
+    "nivel": "seniorities",
     "palavras": "keywords",
 }
 _LABELS = {
     "tags": "Tags",
     "cities": "Cidades",
     "work_modes": "Modo",
+    "seniorities": "Nível",
     "keywords": "Palavras",
     "min_salary": "Salário mínimo",
+}
+_UNKNOWN_VALUE = {
+    "work_modes": "usa remoto, hibrido ou presencial.",
+    "seniorities": "usa estagio, junior, mid, senior ou lead.",
 }
 _COMMAND = re.compile(r"^/(\w+)(?:@\w+)?(?:\s+(.*))?$", re.DOTALL)
 
@@ -177,6 +184,8 @@ def _normalize_values(key: str, values: list[str]) -> list[str]:
         return [normalize.normalize_work_mode(v) for v in values]
     if key == "tags":
         return [normalize.canonical_tag(v) for v in values]
+    if key == "seniorities":
+        return [normalize.normalize_seniority(v) for v in values]
     return [v.lower() for v in values]
 
 
@@ -187,8 +196,8 @@ def _set_list(
     filters = dict(subscriptions[0].filters)
     edits = bool(args) and all(arg[0] in "+-" and len(arg) > 1 for arg in args)
     values = _normalize_values(key, [arg[1:] if edits else arg for arg in args])
-    if "unknown" in values:
-        return REJECTED.format(reason="usa remoto, hibrido ou presencial.")
+    if key in _UNKNOWN_VALUE and "unknown" in values:
+        return REJECTED.format(reason=_UNKNOWN_VALUE[key])
     if edits:
         current = list(cast("list[str]", filters.get(key, [])))
         for arg, value in zip(args, values, strict=True):

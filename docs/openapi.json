@@ -140,6 +140,10 @@
             ],
             "title": "Salary Min"
           },
+          "seniority": {
+            "title": "Seniority",
+            "type": "string"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -172,6 +176,7 @@
           "company",
           "city",
           "work_mode",
+          "seniority",
           "salary_min",
           "salary_max",
           "tags",
@@ -276,6 +281,10 @@
             ],
             "title": "Salary Min"
           },
+          "seniority": {
+            "title": "Seniority",
+            "type": "string"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -308,6 +317,7 @@
           "company",
           "city",
           "work_mode",
+          "seniority",
           "salary_min",
           "salary_max",
           "tags",
@@ -505,6 +515,21 @@
               }
             ],
             "title": "Min Salary"
+          },
+          "seniorities": {
+            "items": {
+              "enum": [
+                "intern",
+                "junior",
+                "mid",
+                "senior",
+                "lead"
+              ],
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Seniorities",
+            "type": "array"
           },
           "tags": {
             "items": {
@@ -796,6 +821,29 @@
                 }
               ],
               "title": "Work Mode"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seniority",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "intern",
+                    "junior",
+                    "mid",
+                    "senior",
+                    "lead"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Seniority"
             }
           },
           {
