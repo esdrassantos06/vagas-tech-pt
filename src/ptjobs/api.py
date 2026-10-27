@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
@@ -19,9 +20,10 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ptjobs import digest, notify, telegram_bot
+from ptjobs import digest, discord_bot, notify, telegram_bot
 from ptjobs.config import Settings, get_settings
 from ptjobs.db import session_scope
 from ptjobs.errors import (
@@ -30,6 +32,7 @@ from ptjobs.errors import (
     NotFoundError,
     RateLimitError,
     UnauthorizedError,
+    ValidationError,
 )
 from ptjobs.models import INT32_MAX, SOURCES, Job, ScrapeRun, Subscription
 from ptjobs.schemas import (
@@ -617,6 +620,35 @@ def create_app() -> FastAPI:
             background.add_task(_send_quietly, settings, email, text_body, html_body)
         db.flush()
         return {"status": "accepted"}
+
+    @app.post("/discord/interactions", tags=["subscriptions"])
+    async def discord_interactions(
+        request: Request,
+        db: Session = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ) -> dict[str, Any]:
+        """Receive Discord slash commands; only Discord can call it (Ed25519)."""
+        body = await request.body()
+        if not settings.discord_public_key or not discord_bot.verify(
+            settings.discord_public_key,
+            request.headers.get("x-signature-ed25519", ""),
+            request.headers.get("x-signature-timestamp", ""),
+            body,
+        ):
+            raise UnauthorizedError("Invalid request signature")
+        try:
+            interaction = json.loads(body)
+        except ValueError:
+            raise ValidationError("Body must be JSON") from None
+        if not isinstance(interaction, dict):
+            raise ValidationError("Body must be a JSON object")
+        return await run_in_threadpool(
+            discord_bot.handle,
+            db,
+            interaction,
+            settings=settings,
+            client=_http_client,
+        )
 
     @app.post("/telegram/webhook", tags=["subscriptions"])
     def telegram_webhook(

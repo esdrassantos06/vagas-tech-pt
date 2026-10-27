@@ -712,6 +712,60 @@
         ]
       }
     },
+    "/discord/interactions": {
+      "post": {
+        "description": "Receive Discord slash commands; only Discord can call it (Ed25519).",
+        "operationId": "discord_interactions_discord_interactions_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Discord Interactions Discord Interactions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Discord Interactions",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "description": "Report service health; 503 DB_UNAVAILABLE if the database is down.",

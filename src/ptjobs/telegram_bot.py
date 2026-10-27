@@ -42,8 +42,8 @@ CONFIRMED = (
     "com os teus filtros."
 )
 INVALID_LINK = "Link inválido ou já utilizado. Cria uma nova subscrição."
-NEEDS_START = "Ainda não tens alertas neste chat. Envia /start para começar."
-STOPPED = "Alertas cancelados. Envia /start para voltar a ativar."
+NEEDS_START = "Ainda não tens alertas aqui. Envia {start} para começar."
+STOPPED = "Alertas cancelados. Envia {start} para voltar a ativar."
 CLEARED = "Filtros apagados. Recebes todas as vagas tech."
 SAVED = "Filtros guardados.\n\n"
 REJECTED = "Não consegui guardar: {reason}"
@@ -89,28 +89,45 @@ def handle(db: Session, chat_id: str, text: str, *, base_url: str) -> str:
     if command == "start":
         return _start(db, chat_id, args)
 
-    subscriptions = _chat_subscriptions(db, chat_id)
     if command in {"ajuda", "help"}:
         return HELP
-    if not subscriptions:
-        return NEEDS_START if command in _MANAGE_COMMANDS else HELP
+    reply = manage(
+        db, _chat_subscriptions(db, chat_id), command, args, base_url=base_url
+    )
+    return reply or HELP
 
+
+def manage(
+    db: Session,
+    subscriptions: list[Subscription],
+    command: str,
+    args: list[str],
+    *,
+    base_url: str,
+    start: str = "/start",
+) -> str | None:
+    """Run a filter or management command on a chat's subscriptions.
+
+    Shared by the Telegram and Discord bots. Returns None for unknown commands.
+    """
+    if command not in _MANAGE_COMMANDS:
+        return None
+    if not subscriptions:
+        return NEEDS_START.format(start=start)
     if command == "filtros":
         return _describe(subscriptions[0].filters)
     if command == "parar":
         for subscription in subscriptions:
             db.delete(subscription)
         db.flush()
-        return STOPPED
+        return STOPPED.format(start=start)
     if command == "token":
         return _rotate_token(db, subscriptions[0], base_url)
     if command == "limpar":
         return _save(db, subscriptions, {}, CLEARED)
     if command in _LIST_FILTERS:
         return _set_list(db, subscriptions, _LIST_FILTERS[command], args)
-    if command == "salario":
-        return _set_salary(db, subscriptions, args)
-    return HELP
+    return _set_salary(db, subscriptions, args)
 
 
 _MANAGE_COMMANDS = {"filtros", "parar", "token", "limpar", "salario", *_LIST_FILTERS}

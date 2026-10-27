@@ -9,6 +9,7 @@ import sys
 import httpx
 from sqlalchemy import select
 
+from ptjobs import discord_bot
 from ptjobs.config import get_settings
 from ptjobs.db import session_scope
 from ptjobs.models import SOURCES, Subscription
@@ -83,6 +84,15 @@ def _cmd_openapi(_: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_discord_commands(_: argparse.Namespace) -> int:
+    settings = get_settings()
+    with httpx.Client(timeout=20.0) as client:
+        discord_bot.register_commands(
+            settings.discord_application_id, settings.discord_bot_token, client=client
+        )
+    return 0
+
+
 def _cmd_scrape(args: argparse.Namespace) -> int:
     run_scrape([args.source] if args.source else None)
     return 0
@@ -108,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     scrape.add_argument("--source", choices=SOURCES, help="Limit to one source")
     sub.add_parser("notify", help="Deliver digests to verified subscriptions")
     sub.add_parser("run", help="Scrape all sources then deliver digests")
+    sub.add_parser("discord-commands", help="Register the Discord slash commands")
 
     args = parser.parse_args(argv)
     handlers = {
@@ -115,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         "scrape": _cmd_scrape,
         "notify": _cmd_notify,
         "run": _cmd_run,
+        "discord-commands": _cmd_discord_commands,
     }
     return handlers[args.command](args)
 

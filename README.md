@@ -125,6 +125,7 @@ opcionais.
 | `PUBLIC_BASE_URL` | sim | URL público da API, usado nos links de confirmação (`https` em produção) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | para email | Conta de onde os emails saem |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | para Telegram | O bot do serviço |
+| `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN` | para o bot de Discord | A aplicação do Discord Developer Portal |
 | `ADMIN_DISCORD_WEBHOOK` | não | Recebe alertas quando um scraper falha |
 
 As variáveis de canal identificam o **remetente** (o serviço), não o
@@ -135,8 +136,26 @@ do Discord, ou carrega em `/start` no bot do Telegram.
 
 ### Discord
 
-Não precisa de configuração. O utilizador cria um webhook num canal do servidor
-dele (Definições do canal, Integrações, Webhooks) e usa o URL como `target`. Só
+Com o bot, um admin do servidor escreve `/alertas` num canal: o bot cria lá um
+webhook e ativa os alertas. Depois `/tags`, `/cidades`, `/modo`, `/nivel`,
+`/palavras`, `/salario`, `/filtros`, `/limpar`, `/token` e `/parar` funcionam
+como no Telegram (com `+`/`-`). Os comandos só aparecem a quem tem a permissão
+Gerir Servidor e as respostas só são vistas por quem os usou.
+
+Configurar o bot:
+
+1. No [Discord Developer Portal](https://discord.com/developers/applications),
+   cria a aplicação e guarda Application ID, Public Key e o token do bot.
+2. Em Installation, Guild Install com `applications.commands` e `bot`, e as
+   permissões Manage Webhooks, Send Messages e Embed Links. Adiciona o bot ao
+   servidor.
+3. Configura `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY` e
+   `DISCORD_BOT_TOKEN`, faz deploy e define o Interactions Endpoint URL como
+   `https://<dominio>/discord/interactions`.
+4. Regista os comandos uma vez: `python -m ptjobs discord-commands`.
+
+Sem bot, também funciona: cria um webhook no canal (Definições do canal,
+Integrações, Webhooks) e usa o URL como `target` em `POST /subscriptions`. Só
 são aceites URLs `https://discord.com/api/webhooks/...`.
 
 ### Email (Resend)
