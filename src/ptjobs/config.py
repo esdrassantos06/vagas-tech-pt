@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     admin_discord_webhook: str = ""
 
+    discord_application_id: str = ""
+    discord_public_key: str = ""
+    discord_bot_token: str = ""
+
     @field_validator("database_url")
     @classmethod
     def _use_psycopg_driver(cls, value: str) -> str:

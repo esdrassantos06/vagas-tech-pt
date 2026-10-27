@@ -30,6 +30,7 @@ from ptjobs.models import Job, Subscription
 
 _DISCORD_HOSTS = frozenset({"discord.com", "discordapp.com"})
 _TELEGRAM_API = "https://api.telegram.org"
+_DISCORD_API = "https://discord.com/api/v10"
 
 
 def new_token() -> str:
@@ -111,6 +112,31 @@ def send_discord(
     )
     try:
         response = client.post(webhook_url, json=payload)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise ChannelError(
+            f"Discord delivery failed: HTTP {exc.response.status_code}"
+        ) from None
+    except httpx.HTTPError:
+        raise ChannelError("Discord delivery failed") from None
+
+
+def send_discord_bot(
+    bot_token: str,
+    channel_id: str,
+    payload: dict[str, Any],
+    *,
+    client: httpx.Client,
+) -> None:
+    """Post a message to a Discord channel as the bot; ChannelError on failure."""
+    if not channel_id.isdigit():
+        raise ChannelError("Invalid Discord channel id")
+    try:
+        response = client.post(
+            f"{_DISCORD_API}/channels/{channel_id}/messages",
+            headers={"Authorization": f"Bot {bot_token}"},
+            json=payload,
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         raise ChannelError(
@@ -268,6 +294,14 @@ def build_deliver(
     """Return a delivery callback rendering a digest for a subscription's channel."""
 
     def deliver(subscription: Subscription, digest: Digest) -> None:
+        if subscription.channel == "discord" and subscription.discord_channel_id:
+            send_discord_bot(
+                settings.discord_bot_token,
+                subscription.discord_channel_id,
+                render_discord(digest),
+                client=http_client,
+            )
+            return
         if not subscription.target:
             raise ChannelError(f"Subscription {subscription.id} has no target")
         if subscription.channel == "email":

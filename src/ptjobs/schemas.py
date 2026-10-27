@@ -151,8 +151,10 @@ class SubscriptionCreate(BaseModel):
                 validate_email(self.target or "", check_deliverability=False)
             except EmailNotValidError as exc:
                 raise ValueError("invalid email address") from exc
-        elif self.channel == "discord" and (
-            not self.target or not validate_discord_webhook(self.target)
+        elif (
+            self.channel == "discord"
+            and self.target
+            and not validate_discord_webhook(self.target)
         ):
             raise ValueError("invalid Discord webhook URL")
         return self
@@ -186,6 +188,10 @@ class SubscriptionCreated(BaseModel):
     id: UUID
     manage_token: str
     deep_link: str | None = None
+    verify_code: str | None = Field(
+        default=None,
+        description="Discord without target: run /alertas codigo:<this> in a channel",
+    )
 
 
 class SubscriptionOut(BaseModel):

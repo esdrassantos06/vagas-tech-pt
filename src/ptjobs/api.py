@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
@@ -19,9 +20,10 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ptjobs import digest, notify, telegram_bot
+from ptjobs import digest, discord_bot, notify, telegram_bot
 from ptjobs.config import Settings, get_settings
 from ptjobs.db import session_scope
 from ptjobs.errors import (
@@ -30,6 +32,7 @@ from ptjobs.errors import (
     NotFoundError,
     RateLimitError,
     UnauthorizedError,
+    ValidationError,
 )
 from ptjobs.models import INT32_MAX, SOURCES, Job, ScrapeRun, Subscription
 from ptjobs.schemas import (
@@ -71,7 +74,9 @@ normalized and deduplicated across sources.
    `{"channel": "telegram", "filters": {"tags": ["python"]}}`.
 2. Confirm it:
    - **Email**: click the link sent to your inbox.
-   - **Discord**: click the link posted through your channel webhook.
+   - **Discord**: install the bot with the returned `deep_link`, then run
+     `/alertas codigo:<verify_code>` in the channel. With a webhook URL as
+     `target`, click the link posted through it instead.
    - **Telegram**: open the returned `deep_link` and press Start.
 3. Keep the `manage_token`. Send it as `Authorization: Bearer <token>` to
    `/subscriptions/me` to read, update or delete the alert.
@@ -115,6 +120,10 @@ INVALID_VERIFY_PAGE = (
 TELEGRAM_VERIFY_PAGE = (
     "Confirma no Telegram",
     "As subscrições de Telegram confirmam-se abrindo o link do bot.",
+)
+DISCORD_BOT_VERIFY_PAGE = (
+    "Confirma no Discord",
+    "Instala o bot e escreve /alertas codigo:<o teu código> no canal.",
 )
 VERIFIED_PAGE = (
     "Subscrição confirmada",
@@ -397,11 +406,14 @@ def create_app() -> FastAPI:
         body: SubscriptionCreate,
         db: Session = Depends(get_db),
         verifier: Callable[[str, str | None, str], None] = Depends(get_verifier),
+        settings: Settings = Depends(get_settings),
     ) -> SubscriptionCreated:
         """Create a job alert and return its `manage_token` once.
 
         - **email**: `target` is your address; a confirmation link is emailed.
-        - **discord**: `target` is a channel webhook URL; the link is posted there.
+        - **discord**: omit `target`, install the bot with the returned `deep_link`
+          and run `/alertas codigo:<verify_code>` in a channel. Or pass a channel
+          webhook URL as `target` and the confirmation link is posted there.
         - **telegram**: omit `target`, open the returned `deep_link` and press Start.
 
         Alerts are only sent after confirmation. Empty filters match every job."""
@@ -436,12 +448,19 @@ def create_app() -> FastAPI:
         db.flush()
 
         verifier(body.channel, target, verify_token)
-        deep_link = None
+        deep_link = verify_code = None
         if body.channel == "telegram":
-            username = get_settings().telegram_bot_username
-            deep_link = f"https://t.me/{username}?start={verify_token}"
+            deep_link = (
+                f"https://t.me/{settings.telegram_bot_username}?start={verify_token}"
+            )
+        elif body.channel == "discord" and target is None:
+            deep_link = discord_bot.install_link(settings.discord_application_id)
+            verify_code = verify_token
         return SubscriptionCreated(
-            id=subscription.id, manage_token=manage_token, deep_link=deep_link
+            id=subscription.id,
+            manage_token=manage_token,
+            deep_link=deep_link,
+            verify_code=verify_code,
         )
 
     def _pending_verification(db: Session, token: str) -> Subscription:
@@ -454,6 +473,8 @@ def create_app() -> FastAPI:
             raise _PageError(404, *INVALID_VERIFY_PAGE)
         if subscription.channel == "telegram":
             raise _PageError(422, *TELEGRAM_VERIFY_PAGE)
+        if subscription.channel == "discord" and subscription.target is None:
+            raise _PageError(422, *DISCORD_BOT_VERIFY_PAGE)
         return subscription
 
     @app.get(
@@ -617,6 +638,35 @@ def create_app() -> FastAPI:
             background.add_task(_send_quietly, settings, email, text_body, html_body)
         db.flush()
         return {"status": "accepted"}
+
+    @app.post("/discord/interactions", tags=["subscriptions"])
+    async def discord_interactions(
+        request: Request,
+        db: Session = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+    ) -> dict[str, Any]:
+        """Receive Discord slash commands; only Discord can call it (Ed25519)."""
+        body = await request.body()
+        if not settings.discord_public_key or not discord_bot.verify(
+            settings.discord_public_key,
+            request.headers.get("x-signature-ed25519", ""),
+            request.headers.get("x-signature-timestamp", ""),
+            body,
+        ):
+            raise UnauthorizedError("Invalid request signature")
+        try:
+            interaction = json.loads(body)
+        except ValueError:
+            raise ValidationError("Body must be JSON") from None
+        if not isinstance(interaction, dict):
+            raise ValidationError("Body must be a JSON object")
+        return await run_in_threadpool(
+            discord_bot.handle,
+            db,
+            interaction,
+            settings=settings,
+            client=_http_client,
+        )
 
     @app.post("/telegram/webhook", tags=["subscriptions"])
     def telegram_webhook(

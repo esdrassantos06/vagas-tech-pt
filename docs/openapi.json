@@ -471,6 +471,18 @@
           "manage_token": {
             "title": "Manage Token",
             "type": "string"
+          },
+          "verify_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Discord without target: run /alertas codigo:<this> in a channel",
+            "title": "Verify Code"
           }
         },
         "required": [
@@ -651,7 +663,7 @@
     }
   },
   "info": {
-    "description": "Jobs are scraped from LinkedIn, itjobs.pt and net-empregos,\nnormalized and deduplicated across sources.\n\n## Get job alerts\n\n1. `POST /subscriptions` with a channel and optional filters, for example\n   `{\"channel\": \"telegram\", \"filters\": {\"tags\": [\"python\"]}}`.\n2. Confirm it:\n   - **Email**: click the link sent to your inbox.\n   - **Discord**: click the link posted through your channel webhook.\n   - **Telegram**: open the returned `deep_link` and press Start.\n3. Keep the `manage_token`. Send it as `Authorization: Bearer <token>` to\n   `/subscriptions/me` to read, update or delete the alert.\n\nNew matching jobs arrive as a digest every two hours.\n\nSource code: https://github.com/esdrassantos06/vagas-tech-pt\n",
+    "description": "Jobs are scraped from LinkedIn, itjobs.pt and net-empregos,\nnormalized and deduplicated across sources.\n\n## Get job alerts\n\n1. `POST /subscriptions` with a channel and optional filters, for example\n   `{\"channel\": \"telegram\", \"filters\": {\"tags\": [\"python\"]}}`.\n2. Confirm it:\n   - **Email**: click the link sent to your inbox.\n   - **Discord**: install the bot with the returned `deep_link`, then run\n     `/alertas codigo:<verify_code>` in the channel. With a webhook URL as\n     `target`, click the link posted through it instead.\n   - **Telegram**: open the returned `deep_link` and press Start.\n3. Keep the `manage_token`. Send it as `Authorization: Bearer <token>` to\n   `/subscriptions/me` to read, update or delete the alert.\n\nNew matching jobs arrive as a digest every two hours.\n\nSource code: https://github.com/esdrassantos06/vagas-tech-pt\n",
     "summary": "Open source aggregator of tech jobs in Portugal.",
     "title": "vagas-tech-pt",
     "version": "0.1.0"
@@ -709,6 +721,60 @@
         "summary": "Root",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/discord/interactions": {
+      "post": {
+        "description": "Receive Discord slash commands; only Discord can call it (Ed25519).",
+        "operationId": "discord_interactions_discord_interactions_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Discord Interactions Discord Interactions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Discord Interactions",
+        "tags": [
+          "subscriptions"
         ]
       }
     },
@@ -1115,7 +1181,7 @@
     },
     "/subscriptions": {
       "post": {
-        "description": "Create a job alert and return its `manage_token` once.\n\n- **email**: `target` is your address; a confirmation link is emailed.\n- **discord**: `target` is a channel webhook URL; the link is posted there.\n- **telegram**: omit `target`, open the returned `deep_link` and press Start.\n\nAlerts are only sent after confirmation. Empty filters match every job.",
+        "description": "Create a job alert and return its `manage_token` once.\n\n- **email**: `target` is your address; a confirmation link is emailed.\n- **discord**: omit `target`, install the bot with the returned `deep_link`\n  and run `/alertas codigo:<verify_code>` in a channel. Or pass a channel\n  webhook URL as `target` and the confirmation link is posted there.\n- **telegram**: omit `target`, open the returned `deep_link` and press Start.\n\nAlerts are only sent after confirmation. Empty filters match every job.",
         "operationId": "create_subscription_subscriptions_post",
         "requestBody": {
           "content": {
