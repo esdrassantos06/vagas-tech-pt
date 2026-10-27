@@ -1,0 +1,32 @@
+name: Canary
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-extras
+      - run: uv run playwright install --with-deps chromium
+      - id: live
+        run: uv run pytest -m live -v
+      - name: Open issue on scraper breakage
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "scraper-broken: canary failed on $(date -u +%Y-%m-%d)" \
+            --label "scraper-broken" \
+            --body "The weekly canary run hit a live source and failed. A source likely changed its markup. See the failed run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
