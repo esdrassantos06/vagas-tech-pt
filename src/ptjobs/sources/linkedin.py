@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
@@ -12,6 +13,7 @@ from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
 from ptjobs.errors import ParseError, SourceError
+from ptjobs.normalize import KNOWN_CITIES, KNOWN_TAGS
 from ptjobs.sources.base import RawJob
 
 SOURCE = "linkedin"
@@ -20,6 +22,9 @@ GUEST_SEARCH_URL = (
 )
 DEFAULT_LOCATION = "Portugal"
 PAGE_SIZE = 10
+DYNAMIC_SEARCH_LIMIT = 8
+CITY_QUERY = "software developer"
+Search = str | tuple[str, str]
 
 
 def parse(html_text: str) -> list[RawJob]:
@@ -89,8 +94,29 @@ def _parse_date(value: str | None) -> datetime | None:
         return None
 
 
+def subscriber_searches(
+    filters: Iterable[Mapping[str, object]], *, limit: int = DYNAMIC_SEARCH_LIMIT
+) -> list[tuple[str, str]]:
+    """Extra (keyword, location) searches for the tags and cities people follow.
+
+    Only canonical tags and known cities are used, so free text typed by users
+    never reaches LinkedIn. The most followed come first, capped at limit.
+    """
+    counts: Counter[tuple[str, str]] = Counter()
+    for subscription_filters in filters:
+        for tag in set(_strings(subscription_filters.get("tags"))) & KNOWN_TAGS:
+            counts[(tag.replace("-", " "), DEFAULT_LOCATION)] += 1
+        for city in set(_strings(subscription_filters.get("cities"))) & KNOWN_CITIES:
+            counts[(CITY_QUERY, f"{city.title()}, {DEFAULT_LOCATION}")] += 1
+    return sorted(counts, key=lambda search: (-counts[search], search))[:limit]
+
+
+def _strings(value: object) -> list[str]:
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
 def fetch(
-    keywords: Iterable[str],
+    keywords: Iterable[Search],
     *,
     location: str = DEFAULT_LOCATION,
     html_fetcher: Callable[[str], str] = fetch_html,
@@ -98,7 +124,9 @@ def fetch(
     max_pages: int = 3,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[RawJob]:
-    """Fetch LinkedIn guest cards for each keyword, paging until a short page.
+    """Fetch LinkedIn guest cards for each search, paging until a short page.
+
+    A search is a keyword (searched in location) or a (keyword, location) pair.
 
     A failure on one keyword (blocked page, network error, no cards) is
     recorded and the next keyword continues; the last error is raised only
@@ -107,12 +135,13 @@ def fetch(
     collected: dict[str, RawJob] = {}
     last_error: ParseError | SourceError | None = None
     first_request = True
-    for keyword in keywords:
+    for search in keywords:
+        keyword, where = (search, location) if isinstance(search, str) else search
         for page in range(max_pages):
             if not first_request:
                 sleep(pause_seconds)
             first_request = False
-            url = search_url(keyword, location=location, start=page * PAGE_SIZE)
+            url = search_url(keyword, location=where, start=page * PAGE_SIZE)
             try:
                 jobs = parse(html_fetcher(url))
             except (ParseError, SourceError) as exc:

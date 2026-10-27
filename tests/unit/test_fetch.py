@@ -125,3 +125,38 @@ def test_net_empregos_fetch_preserves_iso8859_accents() -> None:
 
     jobs = net_empregos.fetch(_http(handler))
     assert "Água" in jobs[0].title
+
+
+def test_linkedin_subscriber_searches_use_only_known_tags_and_cities() -> None:
+    filters = [
+        {"tags": ["rust", "python"], "cities": ["braga"]},
+        {"tags": ["rust", "<script>"], "cities": ["atlantis", "braga"]},
+        {"keywords": ["anything goes"], "tags": ["react-native"]},
+    ]
+    searches = linkedin.subscriber_searches(filters, limit=4)
+    assert searches[0] == ("rust", "Portugal")
+    assert ("software developer", "Braga, Portugal") in searches
+    assert ("react native", "Portugal") in searches
+    assert len(searches) == 4
+    flat = " ".join(k + where for k, where in searches).lower()
+    assert "<" not in flat and "atlantis" not in flat and "anything" not in flat
+
+
+def test_linkedin_subscriber_searches_are_capped() -> None:
+    from ptjobs.normalize import KNOWN_TAGS
+
+    filters = [{"tags": sorted(KNOWN_TAGS)}]
+    assert len(linkedin.subscriber_searches(filters, limit=8)) == 8
+
+
+def test_linkedin_fetch_accepts_keyword_location_pairs() -> None:
+    html = (FIXTURES / "linkedin" / "listing.html").read_text(encoding="utf-8")
+    calls: list[str] = []
+    linkedin.fetch(
+        ["python", ("rust", "Braga, Portugal")],
+        html_fetcher=lambda url: calls.append(url) or html,
+        sleep=lambda _: None,
+        max_pages=1,
+    )
+    assert "location=Portugal" in calls[0]
+    assert "keywords=rust" in calls[1] and "location=Braga%2C+Portugal" in calls[1]

@@ -7,10 +7,11 @@ import json
 import sys
 
 import httpx
+from sqlalchemy import select
 
 from ptjobs.config import get_settings
 from ptjobs.db import session_scope
-from ptjobs.models import SOURCES
+from ptjobs.models import SOURCES, Subscription
 from ptjobs.notify import alert_admin, build_deliver, run_digest
 from ptjobs.pipeline import run_source
 from ptjobs.sources import itjobs, linkedin, net_empregos
@@ -31,8 +32,18 @@ def _scrapers(client: httpx.Client) -> dict[str, object]:
     return {
         "net_empregos": lambda: net_empregos.fetch(polite),
         "itjobs": lambda: itjobs.fetch(polite),
-        "linkedin": lambda: linkedin.fetch(LINKEDIN_KEYWORDS),
+        "linkedin": lambda: linkedin.fetch(
+            [*LINKEDIN_KEYWORDS, *_subscriber_searches()]
+        ),
     }
+
+
+def _subscriber_searches() -> list[tuple[str, str]]:
+    with session_scope() as session:
+        filters = session.scalars(
+            select(Subscription.filters).where(Subscription.verified_at.is_not(None))
+        ).all()
+    return linkedin.subscriber_searches(filters)
 
 
 def run_scrape(sources: list[str] | None = None) -> None:
