@@ -74,7 +74,9 @@ normalized and deduplicated across sources.
    `{"channel": "telegram", "filters": {"tags": ["python"]}}`.
 2. Confirm it:
    - **Email**: click the link sent to your inbox.
-   - **Discord**: click the link posted through your channel webhook.
+   - **Discord**: install the bot with the returned `deep_link`, then run
+     `/alertas codigo:<verify_code>` in the channel. With a webhook URL as
+     `target`, click the link posted through it instead.
    - **Telegram**: open the returned `deep_link` and press Start.
 3. Keep the `manage_token`. Send it as `Authorization: Bearer <token>` to
    `/subscriptions/me` to read, update or delete the alert.
@@ -118,6 +120,10 @@ INVALID_VERIFY_PAGE = (
 TELEGRAM_VERIFY_PAGE = (
     "Confirma no Telegram",
     "As subscrições de Telegram confirmam-se abrindo o link do bot.",
+)
+DISCORD_BOT_VERIFY_PAGE = (
+    "Confirma no Discord",
+    "Instala o bot e escreve /alertas codigo:<o teu código> no canal.",
 )
 VERIFIED_PAGE = (
     "Subscrição confirmada",
@@ -400,11 +406,14 @@ def create_app() -> FastAPI:
         body: SubscriptionCreate,
         db: Session = Depends(get_db),
         verifier: Callable[[str, str | None, str], None] = Depends(get_verifier),
+        settings: Settings = Depends(get_settings),
     ) -> SubscriptionCreated:
         """Create a job alert and return its `manage_token` once.
 
         - **email**: `target` is your address; a confirmation link is emailed.
-        - **discord**: `target` is a channel webhook URL; the link is posted there.
+        - **discord**: omit `target`, install the bot with the returned `deep_link`
+          and run `/alertas codigo:<verify_code>` in a channel. Or pass a channel
+          webhook URL as `target` and the confirmation link is posted there.
         - **telegram**: omit `target`, open the returned `deep_link` and press Start.
 
         Alerts are only sent after confirmation. Empty filters match every job."""
@@ -439,12 +448,19 @@ def create_app() -> FastAPI:
         db.flush()
 
         verifier(body.channel, target, verify_token)
-        deep_link = None
+        deep_link = verify_code = None
         if body.channel == "telegram":
-            username = get_settings().telegram_bot_username
-            deep_link = f"https://t.me/{username}?start={verify_token}"
+            deep_link = (
+                f"https://t.me/{settings.telegram_bot_username}?start={verify_token}"
+            )
+        elif body.channel == "discord" and target is None:
+            deep_link = discord_bot.install_link(settings.discord_application_id)
+            verify_code = verify_token
         return SubscriptionCreated(
-            id=subscription.id, manage_token=manage_token, deep_link=deep_link
+            id=subscription.id,
+            manage_token=manage_token,
+            deep_link=deep_link,
+            verify_code=verify_code,
         )
 
     def _pending_verification(db: Session, token: str) -> Subscription:
@@ -457,6 +473,8 @@ def create_app() -> FastAPI:
             raise _PageError(404, *INVALID_VERIFY_PAGE)
         if subscription.channel == "telegram":
             raise _PageError(422, *TELEGRAM_VERIFY_PAGE)
+        if subscription.channel == "discord" and subscription.target is None:
+            raise _PageError(422, *DISCORD_BOT_VERIFY_PAGE)
         return subscription
 
     @app.get(

@@ -115,7 +115,7 @@ def manage(
     if not subscriptions:
         return NEEDS_START.format(start=start)
     if command == "filtros":
-        return _describe(subscriptions[0].filters)
+        return describe(subscriptions[0].filters)
     if command == "parar":
         for subscription in subscriptions:
             db.delete(subscription)
@@ -254,10 +254,11 @@ def _save(
     for subscription in subscriptions:
         subscription.filters = clean
     db.flush()
-    return reply or SAVED + _describe(clean)
+    return reply or SAVED + describe(clean)
 
 
-def _describe(filters: dict[str, Any]) -> str:
+def describe(filters: dict[str, Any]) -> str:
+    """Human-readable summary of a subscription's filters."""
     if not filters:
         return "Sem filtros: recebes todas as vagas tech."
     lines = ["Os teus filtros:"]

@@ -39,7 +39,14 @@ COMMANDS = {
     "token": "Novo token de gestão para a API (só tu vês)",
     "parar": "Cancelar os alertas deste canal",
 }
-_WITH_VALUES = {"tags", "cidades", "modo", "nivel", "palavras", "salario"}
+_OPTIONS = {
+    "alertas": ("codigo", "Código recebido ao subscrever pela API (opcional)"),
+    **dict.fromkeys(
+        ("tags", "cidades", "modo", "nivel", "palavras", "salario"),
+        ("valores", "Valores"),
+    ),
+}
+INSTALL_PERMISSIONS = 1024 | 2048 | 16384
 WELCOME = (
     "Alertas ativos neste canal. Sem filtros recebes todas as vagas tech. "
     "Usa /tags, /cidades, /modo, /nivel, /palavras e /salario para filtrar."
@@ -49,6 +56,8 @@ NO_ACCESS = (
     "Não consigo escrever neste canal. Dá ao bot as permissões Send Messages "
     "e Embed Links aqui e tenta outra vez."
 )
+CONFIRMED = "Subscrição confirmada neste canal.\n\n"
+INVALID_CODE = "Código inválido ou já usado. Cria uma nova subscrição."
 ANNOUNCEMENT = {
     "content": "As novas vagas tech vão ser publicadas neste canal.",
     "allowed_mentions": {"parse": []},
@@ -88,16 +97,24 @@ def command_payloads() -> list[dict[str, Any]]:
             "options": [
                 {
                     "type": 3,
-                    "name": "valores",
-                    "description": "Valores",
+                    "name": _OPTIONS[name][0],
+                    "description": _OPTIONS[name][1],
                     "required": False,
                 }
             ]
-            if name in _WITH_VALUES
+            if name in _OPTIONS
             else [],
         }
         for name, description in COMMANDS.items()
     ]
+
+
+def install_link(app_id: str) -> str:
+    """Bot install URL with View Channel, Send Messages and Embed Links."""
+    return (
+        f"https://discord.com/oauth2/authorize?client_id={app_id}"
+        f"&scope=bot%20applications.commands&permissions={INSTALL_PERMISSIONS}"
+    )
 
 
 def register_commands(app_id: str, bot_token: str, *, client: httpx.Client) -> None:
@@ -129,7 +146,7 @@ def handle(
     if parsed is None or not channel_id:
         reply = "Comando desconhecido."
     elif parsed[0] == "alertas":
-        reply = _start(db, channel_id, settings, client)
+        reply = _start(db, channel_id, parsed[1], settings, client)
     else:
         subscriptions = _channel_subscriptions(db, channel_id)
         reply = (
@@ -164,16 +181,39 @@ def _channel_subscriptions(db: Session, channel_id: str) -> list[Subscription]:
 
 
 def _start(
-    db: Session, channel_id: str, settings: Settings, client: httpx.Client
+    db: Session,
+    channel_id: str,
+    args: list[str],
+    settings: Settings,
+    client: httpx.Client,
 ) -> str:
+    """Bind a pending API subscription by its code, or create one for the channel."""
     if _channel_subscriptions(db, channel_id):
         return ALREADY_ACTIVE
+    pending = None
+    if args:
+        pending = db.scalar(
+            select(Subscription).where(
+                Subscription.channel == "discord",
+                Subscription.target.is_(None),
+                Subscription.discord_channel_id.is_(None),
+                Subscription.verify_token_hash == notify.hash_token(args[0]),
+            )
+        )
+        if pending is None:
+            return INVALID_CODE
     try:
         notify.send_discord_bot(
             settings.discord_bot_token, channel_id, ANNOUNCEMENT, client=client
         )
     except ChannelError:
         return NO_ACCESS
+    if pending is not None:
+        pending.discord_channel_id = channel_id
+        pending.verified_at = func.now()
+        pending.verify_token_hash = None
+        db.flush()
+        return CONFIRMED + telegram_bot.describe(pending.filters)
     db.add(
         Subscription(
             channel="discord",

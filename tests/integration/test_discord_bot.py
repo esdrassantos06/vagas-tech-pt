@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from ptjobs import discord_bot, notify
-from ptjobs.api import create_app, get_db
+from ptjobs.api import create_app, get_db, get_verifier
 from ptjobs.config import Settings, get_settings
 from ptjobs.errors import ChannelError
 from ptjobs.models import Subscription
@@ -37,8 +37,9 @@ def client(db_session, posts):
     app = create_app()
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_settings] = lambda: Settings(
-        discord_public_key=PUBLIC, discord_bot_token="BT"
+        discord_public_key=PUBLIC, discord_bot_token="BT", discord_application_id="42"
     )
+    app.dependency_overrides[get_verifier] = lambda: lambda c, t, tok: None
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -193,3 +194,57 @@ def test_register_commands_overwrites_global_commands() -> None:
         "method": "PUT",
         "url": "https://discord.com/api/v10/applications/APP/commands",
     }
+
+
+def _api_subscription(client) -> dict:
+    resp = client.post(
+        "/subscriptions",
+        json={"channel": "discord", "filters": {"tags": ["python"]}},
+    )
+    assert resp.status_code == 202
+    return resp.json()
+
+
+def test_api_signup_returns_install_link_and_code(client, db_session) -> None:
+    body = _api_subscription(client)
+    assert body["deep_link"] == (
+        "https://discord.com/oauth2/authorize?client_id=42"
+        "&scope=bot%20applications.commands&permissions=19456"
+    )
+    assert body["verify_code"] and body["manage_token"]
+    sub = db_session.scalars(select(Subscription)).one()
+    assert (sub.target, sub.discord_channel_id, sub.verified_at) == (None, None, None)
+
+
+def test_alertas_with_code_binds_the_api_subscription(
+    client, db_session, posts
+) -> None:
+    code = _api_subscription(client)["verify_code"]
+    assert "confirmada" in _command(client, "alertas", code)
+    db_session.expire_all()
+    sub = db_session.scalars(select(Subscription)).one()
+    assert sub.discord_channel_id == CHANNEL and sub.verified_at is not None
+    assert sub.filters == {"tags": ["python"]} and sub.verify_token_hash is None
+    assert len(posts) == 1
+    assert "inválido" in _command(client, "alertas", code, channel="222")
+
+
+def test_alertas_code_is_not_reused_in_an_active_channel(client, db_session) -> None:
+    _command(client, "alertas")
+    code = _api_subscription(client)["verify_code"]
+    assert "Já tens alertas" in _command(client, "alertas", code)
+    assert len(db_session.scalars(select(Subscription)).all()) == 2
+
+
+def test_bot_codes_cannot_be_confirmed_by_link(client) -> None:
+    code = _api_subscription(client)["verify_code"]
+    page = client.post("/subscriptions/verify", params={"token": code})
+    assert page.status_code == 422 and "/alertas" in page.text
+
+
+def test_discord_webhook_target_is_still_validated(client) -> None:
+    bad = client.post(
+        "/subscriptions",
+        json={"channel": "discord", "target": "https://evil.example/x"},
+    )
+    assert bad.status_code == 422

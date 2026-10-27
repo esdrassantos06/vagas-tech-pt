@@ -104,10 +104,13 @@ Exemplo de subscrição:
 ```json
 {
   "channel": "discord",
-  "target": "https://discord.com/api/webhooks/123/abc",
   "filters": { "tags": ["python"], "cities": ["lisboa"], "work_modes": ["remote"], "seniorities": ["junior", "mid"] }
 }
 ```
+
+Para Discord sem `target`, a resposta traz o link de instalação do bot em
+`deep_link` e um `verify_code`. Instala o bot e escreve
+`/alertas codigo:<verify_code>` no canal onde queres as vagas.
 
 A resposta traz o `manage_token` uma única vez. Guarda-o para gerir a
 subscrição. Se o perderes, `POST /subscriptions/recover` com
@@ -152,6 +155,9 @@ Configurar o bot:
    `DISCORD_BOT_TOKEN`, faz deploy e define o Interactions Endpoint URL como
    `https://<dominio>/discord/interactions`.
 4. Regista os comandos uma vez: `python -m ptjobs discord-commands`.
+
+Pela API, `POST /subscriptions` com `"channel": "discord"` e sem `target`
+devolve o link de instalação e um código para usar em `/alertas codigo:...`.
 
 Sem bot, também funciona: cria um webhook no canal (Definições do canal,
 Integrações, Webhooks) e usa o URL como `target` em `POST /subscriptions`. Só
