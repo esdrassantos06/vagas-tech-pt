@@ -39,8 +39,8 @@ def job_matches(job: Job, filters: dict[str, Any]) -> bool:
     """Return True if a job satisfies every non-empty filter dimension.
 
     Dimensions are ANDed; values within a dimension are ORed. Recognized keys:
-    keywords, cities, work_modes, tags (lists), and min_salary (int). An empty
-    or missing filter set matches every job.
+    keywords, cities, work_modes, tags (lists), and min_salary (int; 0 means no
+    filter). An empty or missing filter set matches every job.
     """
     keywords = filters.get("keywords")
     if keywords:
@@ -64,18 +64,23 @@ def job_matches(job: Job, filters: dict[str, Any]) -> bool:
 
     min_salary = filters.get("min_salary")
     return not (
-        min_salary is not None
-        and (job.salary_max is None or job.salary_max < int(min_salary))
+        min_salary and (job.salary_max is None or job.salary_max < int(min_salary))
     )
 
 
 def validate_discord_webhook(url: str) -> bool:
-    """Return True only for an https discord.com/discordapp.com webhook URL."""
+    """Return True only for a plain https discord.com/discordapp.com webhook URL.
+
+    Query strings and fragments are rejected so one webhook cannot be registered
+    under many distinct targets.
+    """
     parsed = urlparse(url)
     return (
         parsed.scheme == "https"
         and parsed.hostname in _DISCORD_HOSTS
         and parsed.path.startswith("/api/webhooks/")
+        and not parsed.query
+        and not parsed.fragment
     )
 
 
@@ -90,9 +95,9 @@ def send_discord(webhook_url: str, content: str, *, client: httpx.Client) -> Non
     except httpx.HTTPStatusError as exc:
         raise ChannelError(
             f"Discord delivery failed: HTTP {exc.response.status_code}"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise ChannelError("Discord delivery failed") from exc
+        ) from None
+    except httpx.HTTPError:
+        raise ChannelError("Discord delivery failed") from None
 
 
 def send_telegram(
@@ -106,12 +111,14 @@ def send_telegram(
     except httpx.HTTPStatusError as exc:
         raise ChannelError(
             f"Telegram delivery failed: HTTP {exc.response.status_code}"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise ChannelError("Telegram delivery failed") from exc
+        ) from None
+    except httpx.HTTPError:
+        raise ChannelError("Telegram delivery failed") from None
 
 
 logger = logging.getLogger(__name__)
+# Bot tokens and webhook secrets live in request URLs; never let httpx log them.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 ACTIVE_WINDOW = timedelta(days=7)
 Deliver = Callable[[Subscription, str], None]
 SmtpFactory = Callable[[str, int], SMTP]
@@ -137,15 +144,36 @@ def send_email(
             if settings.smtp_user:
                 smtp.login(settings.smtp_user, settings.smtp_password)
             smtp.send_message(message)
-    except (OSError, SMTPException, ValueError) as exc:
-        raise ChannelError("Email delivery failed") from exc
+    except OSError, SMTPException, ValueError:
+        raise ChannelError("Email delivery failed") from None
 
 
-def format_digest(jobs: list[Job]) -> str:
-    """Render a plain-text digest of jobs for a notification message."""
-    lines = ["Novas vagas tech:", ""]
-    lines.extend(f"- {job.title} @ {job.company}\n  {job.url}" for job in jobs)
-    return "\n".join(lines)
+CHANNEL_MAX_CHARS = {"discord": 2000, "telegram": 4096, "email": 20000}
+
+
+def _more_line(remaining: int, more_url: str) -> str:
+    if remaining <= 0:
+        return ""
+    target = f": {more_url}" if more_url else ""
+    return f"\n\n... e mais {remaining} vaga(s){target}"
+
+
+def format_digest(jobs: list[Job], *, max_chars: int = 4096, more_url: str = "") -> str:
+    """Render a plain-text digest that fits in max_chars.
+
+    Jobs that do not fit are summarized in a final "e mais N vaga(s)" line that
+    links to more_url when given.
+    """
+    body = "Novas vagas tech:\n"
+    shown = 0
+    for job in jobs:
+        entry = f"\n- {job.title} @ {job.company}\n  {job.url}"
+        footer = _more_line(len(jobs) - shown - 1, more_url)
+        if len(body) + len(entry) + len(footer) > max_chars:
+            break
+        body += entry
+        shown += 1
+    return body + _more_line(len(jobs) - shown, more_url)
 
 
 def _new_matching_jobs(
@@ -166,7 +194,11 @@ def _new_matching_jobs(
 
 
 def run_digest(
-    session: Session, *, deliver: Deliver, now: datetime | None = None
+    session: Session,
+    *,
+    deliver: Deliver,
+    now: datetime | None = None,
+    jobs_url: str = "",
 ) -> int:
     """Deliver one digest per verified subscription with new matching jobs.
 
@@ -185,7 +217,12 @@ def run_digest(
         if not jobs:
             continue
         try:
-            deliver(subscription, format_digest(jobs))
+            body = format_digest(
+                jobs,
+                max_chars=CHANNEL_MAX_CHARS.get(subscription.channel, 2000),
+                more_url=jobs_url,
+            )
+            deliver(subscription, body)
         except ChannelError:
             logger.exception("digest delivery failed for %s", subscription.id)
             continue

@@ -93,3 +93,24 @@ def test_channel_failure_keeps_watermark(db_session) -> None:
     assert sent == 0
     db_session.refresh(sub)
     assert sub.last_notified_at is None
+
+
+def test_discord_digest_respects_channel_limit(db_session) -> None:
+    for i in range(80):
+        _job(
+            db_session,
+            external_id=str(i),
+            title=f"Senior Python Backend Developer position number {i}",
+            url=f"https://www.itjobs.pt/oferta/{i}/senior-python-backend-developer",
+            fingerprint=f"{i:040d}",
+        )
+    _sub(db_session)
+    bodies: list[str] = []
+    run_digest(
+        db_session,
+        deliver=lambda s, body: bodies.append(body),
+        jobs_url="https://v/jobs",
+    )
+    assert len(bodies) == 1
+    assert len(bodies[0]) <= 2000
+    assert "e mais" in bodies[0]

@@ -158,3 +158,12 @@ class TestFingerprint:
         fp = fingerprint("Python Developer", "Feedzai", "Lisboa")
         assert len(fp) == 40
         int(fp, 16)
+
+
+class TestTagsIgnoreMarkup:
+    def test_domain_in_url_is_not_a_tag(self) -> None:
+        text = "Cozinheiro. <a href='https://www.net-empregos.com/1/x/'>Ver Oferta</a>"
+        assert normalize_tags(text) == []
+
+    def test_real_dotnet_still_detected(self) -> None:
+        assert normalize_tags("<b>.NET</b> developer with ASP.NET") == ["dotnet"]

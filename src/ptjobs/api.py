@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import hmac
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, Header, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import SQLAlchemyError
@@ -24,24 +26,27 @@ from ptjobs.config import Settings, get_settings
 from ptjobs.db import session_scope
 from ptjobs.errors import (
     AppError,
+    ChannelError,
     NotFoundError,
     RateLimitError,
     UnauthorizedError,
     ValidationError,
 )
-from ptjobs.models import INT32_MAX, Job, ScrapeRun, Subscription
+from ptjobs.models import INT32_MAX, SOURCES, Job, ScrapeRun, Subscription
 from ptjobs.schemas import (
     ErrorResponse,
     JobAlsoOn,
     JobDetail,
     JobPage,
     JobSummary,
+    Source,
     SourceStatus,
     SubscriptionCreate,
     SubscriptionCreated,
     SubscriptionOut,
     SubscriptionUpdate,
     UnsubscribeRequest,
+    WorkMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,7 +58,16 @@ _HTTP_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
 
 _http_client = httpx.Client(timeout=10.0)
 MAX_UNVERIFIED_PER_TARGET = 3
+REPOSITORY_URL = "https://github.com/esdrassantos06/vagas-tech-pt"
 UNVERIFIED_TTL = timedelta(hours=24)
+# Chunked bodies without Content-Length are not counted; the proxy should cap those.
+MAX_BODY_BYTES = 64 * 1024
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
 
 Verifier = "Callable[[str, str | None, str], None]"
 
@@ -105,7 +119,7 @@ def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     app = FastAPI(
         title="vagas-tech-pt",
-        version="0.1.0",
+        version=version("ptjobs"),
         description="Agregador de vagas tech em Portugal.",
         responses={
             404: {"model": ErrorResponse},
@@ -136,6 +150,47 @@ def create_app() -> FastAPI:
         logger.exception("unhandled error")
         return _error(500, "INTERNAL_ERROR", "An unexpected error occurred")
 
+    @app.middleware("http")
+    async def _security_headers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Add baseline security headers to every response."""
+        response = await call_next(request)
+        response.headers.update(SECURITY_HEADERS)
+        return response
+
+    @app.middleware("http")
+    async def _limit_body_size(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Reject bodies whose declared Content-Length exceeds MAX_BODY_BYTES."""
+        length = request.headers.get("content-length", "")
+        if length.isdigit() and int(length) > MAX_BODY_BYTES:
+            return _error(413, "PAYLOAD_TOO_LARGE", "Request body too large")
+        return await call_next(request)
+
+    @app.get("/", tags=["meta"])
+    def root() -> dict[str, object]:
+        """Describe the service and link to its documentation."""
+        return {
+            "name": app.title,
+            "description": app.description,
+            "version": app.version,
+            "docs": "/docs",
+            "redoc": "/redoc",
+            "openapi": "/openapi.json",
+            "health": "/health",
+            "repository": REPOSITORY_URL,
+            "sources": list(SOURCES),
+            "endpoints": sorted(
+                {
+                    route.path
+                    for route in app.routes
+                    if isinstance(route, APIRoute) and route.path != "/"
+                }
+            ),
+        }
+
     @app.get("/health", tags=["meta"])
     def health(db: Session = Depends(get_db)) -> JSONResponse:
         try:
@@ -149,10 +204,10 @@ def create_app() -> FastAPI:
         db: Session = Depends(get_db),
         q: str | None = Query(default=None, max_length=100),
         city: str | None = Query(default=None, max_length=100),
-        work_mode: str | None = None,
+        work_mode: WorkMode | None = None,
         tag: str | None = Query(default=None, max_length=50),
         min_salary: int | None = Query(default=None, ge=0, le=INT32_MAX),
-        source: str | None = Query(default=None, max_length=50),
+        source: Source | None = None,
         since: datetime | None = None,
         page: int = Query(default=1, ge=1, le=10_000),
         size: int = Query(default=20, ge=1, le=100),
@@ -165,7 +220,7 @@ def create_app() -> FastAPI:
         conditions = [Job.last_seen_at >= window_start]
         if source:
             conditions.append(Job.source == source)
-        if city:
+        if city := _strip_nul(city):
             conditions.append(Job.city == city)
         if work_mode:
             conditions.append(Job.work_mode == work_mode)
@@ -279,7 +334,7 @@ def create_app() -> FastAPI:
 
     @app.get("/subscriptions/verify", tags=["subscriptions"])
     def verify_subscription(
-        token: str, db: Session = Depends(get_db)
+        token: str = Query(max_length=128), db: Session = Depends(get_db)
     ) -> dict[str, str]:
         subscription = db.scalar(
             select(Subscription).where(
@@ -353,19 +408,44 @@ def create_app() -> FastAPI:
         text = str(message.get("text") or "")
         if text.startswith("/start "):
             token = text.split(" ", 1)[1].strip()
+            chat_id = str((message.get("chat") or {}).get("id"))
             subscription = db.scalar(
                 select(Subscription).where(
                     Subscription.verify_token_hash == notify.hash_token(token)
                 )
             )
             if subscription is not None:
-                subscription.target = str((message.get("chat") or {}).get("id"))
+                subscription.target = chat_id
                 subscription.verified_at = func.now()
                 subscription.verify_token_hash = None
                 db.flush()
+            _reply_telegram(
+                settings,
+                chat_id,
+                _TELEGRAM_CONFIRMED if subscription else _TELEGRAM_INVALID,
+            )
         return {"ok": True}
 
     return app
+
+
+_TELEGRAM_CONFIRMED = (
+    "Subscrição confirmada. Vais receber aqui as novas vagas tech que batem "
+    "com os teus filtros."
+)
+_TELEGRAM_INVALID = "Link inválido ou já utilizado. Cria uma nova subscrição."
+
+
+def _reply_telegram(settings: Settings, chat_id: str, text: str) -> None:
+    """Best-effort bot reply; a failure must not make Telegram retry the update."""
+    if not settings.telegram_bot_token:
+        return
+    try:
+        notify.send_telegram(
+            settings.telegram_bot_token, chat_id, text, client=_http_client
+        )
+    except ChannelError:
+        logger.exception("telegram reply failed")
 
 
 def _require_subscription(db: Session, authorization: str | None) -> Subscription:

@@ -3,13 +3,38 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from email_validator import EmailNotValidError, validate_email
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
+from ptjobs.models import INT32_MAX
 from ptjobs.notify import validate_discord_webhook
+
+MAX_ITEMS = 20
+
+
+def _reject_nul(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError("NUL bytes are not allowed")
+    return value
+
+
+FilterTerm = Annotated[
+    str, StringConstraints(min_length=1, max_length=50), AfterValidator(_reject_nul)
+]
+Target = Annotated[str, StringConstraints(max_length=500), AfterValidator(_reject_nul)]
+Token = Annotated[str, StringConstraints(max_length=128), AfterValidator(_reject_nul)]
+WorkMode = Literal["onsite", "hybrid", "remote", "unknown"]
+Source = Literal["linkedin", "itjobs", "net_empregos"]
 
 
 class ErrorDetail(BaseModel):
@@ -88,18 +113,24 @@ class SourceStatus(BaseModel):
 class SubscriptionFilters(BaseModel):
     """Alert filters; empty lists and null mean no constraint on that dimension."""
 
-    keywords: list[str] = []
-    cities: list[str] = []
-    work_modes: list[str] = []
-    tags: list[str] = []
-    min_salary: int | None = None
+    keywords: list[FilterTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
+    cities: list[FilterTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
+    work_modes: list[WorkMode] = Field(default_factory=list, max_length=4)
+    tags: list[FilterTerm] = Field(default_factory=list, max_length=MAX_ITEMS)
+    min_salary: int | None = Field(default=None, ge=0, le=INT32_MAX)
 
 
 class SubscriptionCreate(BaseModel):
     """Request body to create a subscription."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"channel": "telegram", "filters": {"tags": ["python"]}}]
+        }
+    )
+
     channel: Literal["email", "discord", "telegram"]
-    target: str | None = None
+    target: Target | None = None
     filters: SubscriptionFilters = Field(default_factory=SubscriptionFilters)
 
     @model_validator(mode="after")
@@ -129,7 +160,7 @@ class SubscriptionUpdate(BaseModel):
 class UnsubscribeRequest(BaseModel):
     """Request body to unsubscribe using a manage token."""
 
-    token: str
+    token: Token
 
 
 class SubscriptionCreated(BaseModel):

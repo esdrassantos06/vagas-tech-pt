@@ -379,6 +379,16 @@
       },
       "SubscriptionCreate": {
         "description": "Request body to create a subscription.",
+        "examples": [
+          {
+            "channel": "telegram",
+            "filters": {
+              "tags": [
+                "python"
+              ]
+            }
+          }
+        ],
         "properties": {
           "channel": {
             "enum": [
@@ -395,6 +405,7 @@
           "target": {
             "anyOf": [
               {
+                "maxLength": 500,
                 "type": "string"
               },
               {
@@ -445,24 +456,30 @@
         "description": "Alert filters; empty lists and null mean no constraint on that dimension.",
         "properties": {
           "cities": {
-            "default": [],
             "items": {
+              "maxLength": 50,
+              "minLength": 1,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Cities",
             "type": "array"
           },
           "keywords": {
-            "default": [],
             "items": {
+              "maxLength": 50,
+              "minLength": 1,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Keywords",
             "type": "array"
           },
           "min_salary": {
             "anyOf": [
               {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
                 "type": "integer"
               },
               {
@@ -472,18 +489,26 @@
             "title": "Min Salary"
           },
           "tags": {
-            "default": [],
             "items": {
+              "maxLength": 50,
+              "minLength": 1,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Tags",
             "type": "array"
           },
           "work_modes": {
-            "default": [],
             "items": {
+              "enum": [
+                "onsite",
+                "hybrid",
+                "remote",
+                "unknown"
+              ],
               "type": "string"
             },
+            "maxItems": 4,
             "title": "Work Modes",
             "type": "array"
           }
@@ -569,6 +594,7 @@
         "description": "Request body to unsubscribe using a manage token.",
         "properties": {
           "token": {
+            "maxLength": 128,
             "title": "Token",
             "type": "string"
           }
@@ -588,6 +614,60 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/": {
+      "get": {
+        "description": "Describe the service and link to its documentation.",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Root  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Root",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "operationId": "health_health_get",
@@ -682,6 +762,12 @@
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "onsite",
+                    "hybrid",
+                    "remote",
+                    "unknown"
+                  ],
                   "type": "string"
                 },
                 {
@@ -733,7 +819,11 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 50,
+                  "enum": [
+                    "linkedin",
+                    "itjobs",
+                    "net_empregos"
+                  ],
                   "type": "string"
                 },
                 {
@@ -1293,6 +1383,7 @@
             "name": "token",
             "required": true,
             "schema": {
+              "maxLength": 128,
               "title": "Token",
               "type": "string"
             }

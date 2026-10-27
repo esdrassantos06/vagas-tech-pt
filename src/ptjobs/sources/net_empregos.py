@@ -23,8 +23,12 @@ _LOCATION_RE = re.compile(r"Zona:\s*</b>\s*([^<]+)", re.IGNORECASE)
 def parse(xml_text: str | bytes) -> list[RawJob]:
     """Parse a net-empregos RSS feed into RawJob entries.
 
-    Raises ParseError if the document is not a feed or contains no items.
+    Bytes are decoded as windows-1252. Raises ParseError if the document is not
+    a feed or contains no items.
     """
+    if isinstance(xml_text, bytes):
+        # The feed declares iso-8859-1 but is really windows-1252 (e.g. the euro sign).
+        xml_text = xml_text.decode("cp1252", errors="replace")
     try:
         root = ET.fromstring(xml_text)
     except (ET.ParseError, ValueError) as exc:

@@ -220,3 +220,32 @@ def test_since_cannot_resurrect_stale_jobs(client, db_session) -> None:
     )
     since = (datetime.now(UTC) - timedelta(days=60)).isoformat()
     assert client.get("/jobs", params={"since": since}).json()["total"] == 0
+
+
+def test_subscription_example_has_no_min_salary() -> None:
+    schema = create_app().openapi()["components"]["schemas"]["SubscriptionCreate"]
+    example = schema["examples"][0]
+    assert "min_salary" not in example["filters"]
+
+
+def test_root_describes_the_service(client) -> None:
+    from importlib.metadata import version
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "vagas-tech-pt"
+    assert body["version"] == version("ptjobs")
+    assert body["docs"] == "/docs"
+    assert body["openapi"] == "/openapi.json"
+    assert body["repository"] == "https://github.com/esdrassantos06/vagas-tech-pt"
+    assert body["sources"] == ["linkedin", "itjobs", "net_empregos"]
+    assert "/jobs" in body["endpoints"]
+
+
+def test_security_headers_present(client) -> None:
+    headers = client.get("/health").headers
+    assert headers["x-content-type-options"] == "nosniff"
+    assert headers["x-frame-options"] == "DENY"
+    assert headers["referrer-policy"] == "no-referrer"
+    assert "max-age=" in headers["strict-transport-security"]
