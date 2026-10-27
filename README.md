@@ -1,37 +1,67 @@
-# vagas-tech-pt
+<p align="center">
+  <img src="docs/assets/logo.png" alt="vagas-tech-pt" width="120">
+</p>
+
+<h1 align="center">vagas-tech-pt</h1>
+
+<p align="center">
+  <a href="https://github.com/esdrassantos06/vagas-tech-pt/actions/workflows/ci.yml"><img src="https://github.com/esdrassantos06/vagas-tech-pt/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/python-3.15-3776AB" alt="Python 3.15">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
+</p>
 
 ![vagas-tech-pt](docs/assets/vagas-tech-pt.png)
 
-Agregador open source de vagas tech em Portugal. Faz scraping de várias fontes,
-normaliza e deduplica as vagas, expõe uma API REST documentada em OpenAPI, e
-envia alertas por email, Discord ou Telegram.
+Agregador open source de vagas tech em Portugal. Recolhe vagas do LinkedIn, do
+itjobs.pt e do net-empregos, normaliza-as, junta a mesma vaga publicada em sites
+diferentes e serve tudo numa API REST documentada em OpenAPI. Quem quiser recebe
+alertas por email, Discord ou Telegram com os seus próprios filtros.
 
-A fragilidade dos scrapers (os sites mudam o HTML) é tratada como parte do
-desenho: parsers falham alto com `ParseError`, cada execução fica registada em
-`scrape_runs`, e um canary semanal avisa quando uma fonte parte.
+## Como funciona
+
+```
+fontes  ->  scrapers  ->  normalização + dedup  ->  PostgreSQL  ->  API + alertas
+```
+
+1. **Scraping**: cada fonte tem um parser (RSS, HTML com Parsel, ou Playwright no
+   LinkedIn) atrás de um cliente HTTP com retries, backoff exponencial,
+   `Retry-After` e intervalo mínimo por site.
+2. **Normalização**: cidade, regime (remoto, híbrido, presencial), salário anual
+   em EUR e tecnologias.
+3. **Deduplicação**: por fonte, um upsert idempotente. Entre fontes, um
+   fingerprint de empresa + função + cidade. `GET /jobs/{id}` mostra em
+   `also_on` onde mais a vaga aparece.
+4. **Alertas**: um digest por subscrição com as vagas novas que batem com os
+   filtros.
+
+Os sites mudam o HTML e os scrapers partem. Isso faz parte do desenho: os
+parsers falham alto com `ParseError`, cada execução fica em `scrape_runs`
+(visível em `GET /sources`), uma falha alerta o admin, e um canary semanal no
+GitHub Actions corre contra os sites reais e abre uma issue quando uma fonte
+muda.
 
 ## Stack
 
 - Python 3.15, [uv](https://docs.astral.sh/uv/)
 - FastAPI + Pydantic v2 (Swagger em `/docs`, OpenAPI em `/openapi.json`)
-- PostgreSQL 18, SQLAlchemy 2 + Alembic (psycopg 3)
-- Parsel (HTML/XPath) e Playwright + playwright-stealth
+- PostgreSQL 18, SQLAlchemy 2, Alembic, psycopg 3
+- httpx, Parsel, Playwright
 - pytest, ruff, mypy (strict)
 
-## Fontes
-
-- **net-empregos** (RSS, filtra vagas tech por tags)
-- **itjobs.pt** (HTML)
-- **LinkedIn** (páginas públicas de jobs via browser)
-
-## Começar
+## Começar (local)
 
 ```bash
-cp .env.example .env        # ajusta DATABASE_URL e os canais de alerta
-docker compose up -d db     # Postgres 18 local
-make install                # uv sync + playwright chromium
-make migrate                # aplica as migrations
-make run                    # API em http://localhost:8000/docs
+cp .env.example .env
+docker compose up -d db
+make install
+make migrate
+make run
+```
+
+A API fica em http://localhost:8000/docs. Para ter vagas, corre um scrape:
+
+```bash
+uv run python -m ptjobs scrape --source itjobs
 ```
 
 ## Comandos
@@ -42,10 +72,10 @@ make lint         # ruff check + format --check
 make typecheck    # mypy strict
 make openapi      # regenera docs/openapi.json
 
-python -m ptjobs scrape            # faz scraping de todas as fontes
-python -m ptjobs scrape --source itjobs
-python -m ptjobs notify            # envia os digests às subscrições verificadas
-python -m ptjobs run               # scrape + notify (usado pela Scheduled Task)
+python -m ptjobs scrape                  # todas as fontes
+python -m ptjobs scrape --source itjobs  # uma fonte
+python -m ptjobs notify                  # envia os digests
+python -m ptjobs run                     # scrape + notify
 ```
 
 ## API
@@ -53,30 +83,117 @@ python -m ptjobs run               # scrape + notify (usado pela Scheduled Task)
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/health` | Estado da aplicação e da base de dados |
-| GET | `/jobs` | Lista vagas ativas, com filtros e paginação |
-| GET | `/jobs/{id}` | Detalhe de uma vaga, com `also_on` (outras fontes) |
-| GET | `/sources` | Última execução por fonte (monitorização) |
+| GET | `/jobs` | Vagas ativas com filtros e paginação, sem duplicados |
+| GET | `/jobs/{id}` | Detalhe da vaga, com `also_on` (outras fontes) |
+| GET | `/sources` | Última execução de cada scraper |
 | POST | `/subscriptions` | Cria uma subscrição de alertas (opt-in) |
-| GET | `/subscriptions/verify` | Confirma a subscrição |
-| GET/PATCH/DELETE | `/subscriptions/me` | Gere a subscrição (Bearer manage token) |
+| GET | `/subscriptions/verify` | Confirma a subscrição (email e Discord) |
+| GET / PATCH / DELETE | `/subscriptions/me` | Gere a subscrição com `Authorization: Bearer <manage_token>` |
+| POST | `/subscriptions/unsubscribe` | Cancela com o manage token no body |
 | POST | `/telegram/webhook` | Webhook do bot de Telegram |
 
 Filtros de `/jobs`: `q`, `city`, `work_mode`, `tag`, `min_salary`, `source`,
 `since`, `page`, `size`.
 
-## Deploy
+Exemplo de subscrição:
 
-A imagem publica em `ghcr.io/esdrassantos06/vagas-tech-pt` a cada push em `main`.
-Em Coolify: Postgres 18 (one-click), a app a partir da imagem GHCR (o entrypoint
-corre `alembic upgrade head` antes do `uvicorn`), uma Scheduled Task
-`python -m ptjobs run` (cron `0 */2 * * *`), e rate limit em `/subscriptions`
-via Traefik. Define `PUBLIC_BASE_URL` com `https` em produção.
+```json
+{
+  "channel": "discord",
+  "target": "https://discord.com/api/webhooks/123/abc",
+  "filters": { "tags": ["python"], "cities": ["lisboa"], "work_modes": ["remote"] }
+}
+```
+
+A resposta traz o `manage_token` uma única vez. Guarda-o para gerir ou cancelar
+a subscrição.
+
+## Configuração
+
+Só `DATABASE_URL` e `PUBLIC_BASE_URL` são obrigatórias. O resto liga canais
+opcionais.
+
+| Variável | Obrigatória | Para quê |
+|----------|-------------|----------|
+| `DATABASE_URL` | sim | Postgres, no formato `postgresql+psycopg://user:pass@host:5432/db` |
+| `PUBLIC_BASE_URL` | sim | URL público da API, usado nos links de confirmação (`https` em produção) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | para email | Conta de onde os emails saem |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | para Telegram | O bot do serviço |
+| `ADMIN_DISCORD_WEBHOOK` | não | Recebe alertas quando um scraper falha |
+
+As variáveis de canal identificam o **remetente** (o serviço), não o
+utilizador. Cada utilizador só indica o **destino**: o seu email, o seu webhook
+do Discord, ou carrega em `/start` no bot do Telegram.
+
+## Canais de alerta
+
+### Discord
+
+Não precisa de configuração. O utilizador cria um webhook num canal do servidor
+dele (Definições do canal, Integrações, Webhooks) e usa o URL como `target`. Só
+são aceites URLs `https://discord.com/api/webhooks/...`.
+
+### Email (Resend)
+
+1. Em [resend.com](https://resend.com), adiciona e verifica o teu domínio
+   (registos MX e TXT em `send`, TXT em `resend._domainkey`).
+2. Cria uma API key com `Sending access` para esse domínio.
+3. Configura:
+
+```
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=587
+SMTP_USER=resend
+SMTP_PASSWORD=re_xxxxxxxx
+SMTP_FROM=alertas@o-teu-dominio.com
+```
+
+Usa a porta 587 (STARTTLS). O `SMTP_FROM` tem de pertencer ao domínio
+verificado.
+
+### Telegram
+
+1. No [@BotFather](https://t.me/BotFather), `/newbot`, e guarda o token.
+2. Gera um secret: `openssl rand -hex 32`.
+3. Configura `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` (sem `@`) e
+   `TELEGRAM_WEBHOOK_SECRET`.
+4. Depois do deploy, liga o webhook:
+
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<dominio>/telegram/webhook&secret_token=<SECRET>"
+```
+
+A subscrição devolve um `deep_link` para o bot. Ao carregar em `/start`, o chat
+fica associado e verificado.
+
+## Deploy (Coolify)
+
+1. **DNS**: um registo `A` para o subdomínio da API, apontado ao servidor.
+2. **Base de dados**: New Resource, PostgreSQL, imagem `postgres:18`.
+3. **App**: New Resource, Public Repository
+   `https://github.com/esdrassantos06/vagas-tech-pt`, branch `main`, build pack
+   **Dockerfile**, porta `8000`, o teu domínio em Domains.
+4. **Variáveis**: pelo menos `DATABASE_URL` e `PUBLIC_BASE_URL`. O URL interno
+   que o Coolify dá começa por `postgres://`: troca por `postgresql+psycopg://`.
+5. **Healthcheck**: path `/health`, porta `8000`.
+6. **Deploy**. O entrypoint corre `alembic upgrade head` antes do `uvicorn`.
+7. **Scheduled Task**: comando `python -m ptjobs run`, cron `0 */2 * * *`. Dá
+   pelo menos 1 GB de RAM à app por causa do Chromium.
+8. **Deploy automático** (opcional): guarda o Deploy Webhook e um token do
+   Coolify como secrets `COOLIFY_WEBHOOK_URL` e `COOLIFY_TOKEN` no repo. O CD
+   chama-o a cada merge na `main`.
+
+A imagem também é publicada em `ghcr.io/esdrassantos06/vagas-tech-pt` a cada
+merge, se preferires fazer deploy a partir da imagem.
 
 ## Desenvolvimento
 
 O projeto segue TDD: os testes vêm primeiro (RED), depois a implementação
-(GREEN), com a evidência em [docs/testing](docs/testing). Vê
-[CONTRIBUTING.md](CONTRIBUTING.md).
+(GREEN). A evidência de cada fase está em [docs/testing](docs/testing).
+
+Cada PR para a `main` tem de passar 6 checks: lint, typecheck, testes contra
+Postgres 18, drift do OpenAPI, bloqueio de migrations destrutivas e build da
+imagem Docker. Vê [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licença
 
