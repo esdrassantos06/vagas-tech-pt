@@ -1,0 +1,380 @@
+"""FastAPI application exposing jobs, sources, and health."""
+
+from __future__ import annotations
+
+import hmac
+import logging
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+from fastapi import Depends, FastAPI, Header, Path, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.dialects.postgresql import distinct_on
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, aliased
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from ptjobs import notify
+from ptjobs.config import Settings, get_settings
+from ptjobs.db import session_scope
+from ptjobs.errors import (
+    AppError,
+    NotFoundError,
+    RateLimitError,
+    UnauthorizedError,
+    ValidationError,
+)
+from ptjobs.models import INT32_MAX, Job, ScrapeRun, Subscription
+from ptjobs.schemas import (
+    ErrorResponse,
+    JobAlsoOn,
+    JobDetail,
+    JobPage,
+    JobSummary,
+    SourceStatus,
+    SubscriptionCreate,
+    SubscriptionCreated,
+    SubscriptionOut,
+    SubscriptionUpdate,
+    UnsubscribeRequest,
+)
+
+logger = logging.getLogger(__name__)
+
+ACTIVE_WINDOW = timedelta(days=7)
+INT64_MAX = 2**63 - 1
+_HTTP_CODES = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
+
+
+_http_client = httpx.Client(timeout=10.0)
+MAX_UNVERIFIED_PER_TARGET = 3
+UNVERIFIED_TTL = timedelta(hours=24)
+
+Verifier = "Callable[[str, str | None, str], None]"
+
+
+def _default_verifier(channel: str, target: str | None, token: str) -> None:
+    settings = get_settings()
+    link = f"{settings.public_base_url}/subscriptions/verify?token={token}"
+    if channel == "email" and target:
+        notify.send_email(
+            settings, target, "Confirme a subscricao", f"Confirme aqui: {link}"
+        )
+    elif channel == "discord" and target:
+        notify.send_discord(
+            target, f"Confirme a subscricao: {link}", client=_http_client
+        )
+
+
+def get_verifier() -> Callable[[str, str | None, str], None]:
+    """Return the verification-message sender (overridable in tests)."""
+    return _default_verifier
+
+
+def _subscription_from_token(db: Session, token: str) -> Subscription | None:
+    return db.scalar(
+        select(Subscription).where(
+            Subscription.manage_token_hash == notify.hash_token(token)
+        )
+    )
+
+
+def get_db() -> Iterator[Session]:
+    """Yield a database session for the request lifetime."""
+    with session_scope() as session:
+        yield session
+
+
+def _error(
+    status: int, code: str, message: str, details: object = None
+) -> JSONResponse:
+    body = {"error": {"code": code, "message": message, "details": details}}
+    return JSONResponse(status_code=status, content=jsonable_encoder(body))
+
+
+def _strip_nul(value: str | None) -> str | None:
+    return value.replace("\x00", "") or None if value else value
+
+
+def create_app() -> FastAPI:
+    """Build and configure the FastAPI application."""
+    app = FastAPI(
+        title="vagas-tech-pt",
+        version="0.1.0",
+        description="Agregador de vagas tech em Portugal.",
+        responses={
+            404: {"model": ErrorResponse},
+            422: {"model": ErrorResponse},
+            500: {"model": ErrorResponse},
+        },
+    )
+
+    @app.exception_handler(AppError)
+    async def _app_error(_: Request, exc: AppError) -> JSONResponse:
+        return _error(exc.status, exc.code, exc.message, exc.details)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(
+        _: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return _error(
+            422, "VALIDATION_ERROR", "Request validation failed", exc.errors()
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = _HTTP_CODES.get(exc.status_code, "HTTP_ERROR")
+        return _error(exc.status_code, code, str(exc.detail))
+
+    @app.exception_handler(Exception)
+    async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
+        logger.exception("unhandled error")
+        return _error(500, "INTERNAL_ERROR", "An unexpected error occurred")
+
+    @app.get("/health", tags=["meta"])
+    def health(db: Session = Depends(get_db)) -> JSONResponse:
+        try:
+            db.execute(text("SELECT 1"))
+        except SQLAlchemyError:
+            return _error(503, "DB_UNAVAILABLE", "Database is unavailable")
+        return JSONResponse({"status": "ok"})
+
+    @app.get("/jobs", response_model=JobPage, tags=["jobs"])
+    def list_jobs(
+        db: Session = Depends(get_db),
+        q: str | None = Query(default=None, max_length=100),
+        city: str | None = Query(default=None, max_length=100),
+        work_mode: str | None = None,
+        tag: str | None = Query(default=None, max_length=50),
+        min_salary: int | None = Query(default=None, ge=0, le=INT32_MAX),
+        source: str | None = Query(default=None, max_length=50),
+        since: datetime | None = None,
+        page: int = Query(default=1, ge=1, le=10_000),
+        size: int = Query(default=20, ge=1, le=100),
+    ) -> JobPage:
+        window_start = datetime.now(UTC) - ACTIVE_WINDOW
+        if since is not None:
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=UTC)
+            window_start = max(window_start, since)
+        conditions = [Job.last_seen_at >= window_start]
+        if source:
+            conditions.append(Job.source == source)
+        if city:
+            conditions.append(Job.city == city)
+        if work_mode:
+            conditions.append(Job.work_mode == work_mode)
+        if tag := _strip_nul(tag):
+            conditions.append(Job.tags.contains([tag]))
+        if min_salary is not None:
+            conditions.append(Job.salary_max >= min_salary)
+        if q := _strip_nul(q):
+            conditions.append(
+                or_(
+                    Job.title.icontains(q, autoescape=True),
+                    Job.company.icontains(q, autoescape=True),
+                )
+            )
+
+        deduped = (
+            select(Job)
+            .where(*conditions)
+            .ext(distinct_on(Job.fingerprint))
+            .order_by(Job.fingerprint, Job.first_seen_at.desc(), Job.id.desc())
+            .subquery()
+        )
+        job = aliased(Job, deduped)
+        total = db.scalar(select(func.count()).select_from(deduped)) or 0
+        rows = db.scalars(
+            select(job)
+            .order_by(job.first_seen_at.desc(), job.id.desc())
+            .limit(size)
+            .offset((page - 1) * size)
+        ).all()
+        return JobPage(
+            items=[JobSummary.model_validate(r) for r in rows],
+            total=total,
+            page=page,
+            size=size,
+        )
+
+    @app.get("/jobs/{job_id}", response_model=JobDetail, tags=["jobs"])
+    def get_job(
+        job_id: int = Path(ge=1, le=INT64_MAX),
+        db: Session = Depends(get_db),
+    ) -> JobDetail:
+        job = db.get(Job, job_id)
+        if job is None:
+            raise NotFoundError("Job", str(job_id))
+        siblings = db.scalars(
+            select(Job).where(Job.fingerprint == job.fingerprint, Job.id != job.id)
+        ).all()
+        detail = JobDetail.model_validate(job)
+        detail.also_on = [JobAlsoOn.model_validate(s) for s in siblings]
+        return detail
+
+    @app.get("/sources", response_model=list[SourceStatus], tags=["meta"])
+    def list_sources(db: Session = Depends(get_db)) -> list[SourceStatus]:
+        rows = db.scalars(
+            select(ScrapeRun)
+            .ext(distinct_on(ScrapeRun.source))
+            .order_by(
+                ScrapeRun.source,
+                ScrapeRun.started_at.desc(),
+                ScrapeRun.id.desc(),
+            )
+        ).all()
+        return sorted(
+            (SourceStatus.model_validate(r) for r in rows), key=lambda r: r.source
+        )
+
+    @app.post("/subscriptions", status_code=202, tags=["subscriptions"])
+    def create_subscription(
+        body: SubscriptionCreate,
+        db: Session = Depends(get_db),
+        verifier: Callable[[str, str | None, str], None] = Depends(get_verifier),
+    ) -> SubscriptionCreated:
+        target = None if body.channel == "telegram" else body.target
+        if target is not None and body.channel == "email":
+            target = target.lower()
+        if target is not None:
+            cutoff = datetime.now(UTC) - UNVERIFIED_TTL
+            unverified = db.scalar(
+                select(func.count())
+                .select_from(Subscription)
+                .where(
+                    Subscription.target == target,
+                    Subscription.verified_at.is_(None),
+                    Subscription.created_at >= cutoff,
+                )
+            )
+            if (unverified or 0) >= MAX_UNVERIFIED_PER_TARGET:
+                raise RateLimitError("Too many pending subscriptions for this target")
+
+        manage_token = notify.new_token()
+        verify_token = notify.new_token()
+        subscription = Subscription(
+            channel=body.channel,
+            target=target,
+            filters=body.filters.model_dump(exclude_defaults=True),
+            manage_token_hash=notify.hash_token(manage_token),
+            verify_token_hash=notify.hash_token(verify_token),
+        )
+        db.add(subscription)
+        db.flush()
+
+        verifier(body.channel, target, verify_token)
+        deep_link = None
+        if body.channel == "telegram":
+            username = get_settings().telegram_bot_username
+            deep_link = f"https://t.me/{username}?start={verify_token}"
+        return SubscriptionCreated(
+            id=subscription.id, manage_token=manage_token, deep_link=deep_link
+        )
+
+    @app.get("/subscriptions/verify", tags=["subscriptions"])
+    def verify_subscription(
+        token: str, db: Session = Depends(get_db)
+    ) -> dict[str, str]:
+        subscription = db.scalar(
+            select(Subscription).where(
+                Subscription.verify_token_hash == notify.hash_token(token)
+            )
+        )
+        if subscription is None:
+            raise NotFoundError("Subscription", "token")
+        if subscription.channel == "telegram":
+            raise ValidationError("Telegram subscriptions verify via the bot")
+        subscription.verified_at = func.now()
+        subscription.verify_token_hash = None
+        db.flush()
+        return {"status": "verified"}
+
+    @app.get(
+        "/subscriptions/me", response_model=SubscriptionOut, tags=["subscriptions"]
+    )
+    def get_me(
+        db: Session = Depends(get_db),
+        authorization: str | None = Header(default=None),
+    ) -> SubscriptionOut:
+        return SubscriptionOut.model_validate(_require_subscription(db, authorization))
+
+    @app.patch(
+        "/subscriptions/me", response_model=SubscriptionOut, tags=["subscriptions"]
+    )
+    def update_me(
+        body: SubscriptionUpdate,
+        db: Session = Depends(get_db),
+        authorization: str | None = Header(default=None),
+    ) -> SubscriptionOut:
+        subscription = _require_subscription(db, authorization)
+        if body.filters is not None:
+            subscription.filters = body.filters.model_dump(exclude_defaults=True)
+        db.flush()
+        return SubscriptionOut.model_validate(subscription)
+
+    @app.delete("/subscriptions/me", status_code=204, tags=["subscriptions"])
+    def delete_me(
+        db: Session = Depends(get_db),
+        authorization: str | None = Header(default=None),
+    ) -> None:
+        db.delete(_require_subscription(db, authorization))
+        db.flush()
+
+    @app.post("/subscriptions/unsubscribe", tags=["subscriptions"])
+    def unsubscribe(
+        body: UnsubscribeRequest, db: Session = Depends(get_db)
+    ) -> dict[str, str]:
+        subscription = _subscription_from_token(db, body.token)
+        if subscription is None:
+            raise NotFoundError("Subscription", "token")
+        db.delete(subscription)
+        db.flush()
+        return {"status": "unsubscribed"}
+
+    @app.post("/telegram/webhook", tags=["subscriptions"])
+    def telegram_webhook(
+        update: dict[str, Any],
+        db: Session = Depends(get_db),
+        settings: Settings = Depends(get_settings),
+        x_telegram_bot_api_secret_token: str | None = Header(default=None),
+    ) -> dict[str, bool]:
+        secret = settings.telegram_webhook_secret
+        if not secret or not hmac.compare_digest(
+            x_telegram_bot_api_secret_token or "", secret
+        ):
+            raise UnauthorizedError("Invalid webhook secret")
+        message = update.get("message") or {}
+        text = str(message.get("text") or "")
+        if text.startswith("/start "):
+            token = text.split(" ", 1)[1].strip()
+            subscription = db.scalar(
+                select(Subscription).where(
+                    Subscription.verify_token_hash == notify.hash_token(token)
+                )
+            )
+            if subscription is not None:
+                subscription.target = str((message.get("chat") or {}).get("id"))
+                subscription.verified_at = func.now()
+                subscription.verify_token_hash = None
+                db.flush()
+        return {"ok": True}
+
+    return app
+
+
+def _require_subscription(db: Session, authorization: str | None) -> Subscription:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise UnauthorizedError("Bearer manage token required")
+    subscription = _subscription_from_token(db, authorization.removeprefix("Bearer "))
+    if subscription is None:
+        raise UnauthorizedError("Invalid manage token")
+    return subscription
+
+
+app = create_app()
