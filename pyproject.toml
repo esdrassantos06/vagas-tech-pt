@@ -1,0 +1,71 @@
+[project]
+name = "ptjobs"
+version = "0.1.0"
+description = "Aggregator of tech job postings in Portugal"
+readme = "README.md"
+requires-python = ">=3.15"
+license = "MIT"
+authors = [{ name = "esdrassantos06" }]
+dependencies = [
+    "fastapi==0.143.3",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.14.1",
+    "pydantic-settings==2.16.0",
+    "email-validator==2.3.0",
+    "sqlalchemy==2.1.5",
+    "psycopg[binary]==3.3.6",
+    "alembic==1.20.0",
+    "httpx==0.28.1",
+    "parsel==1.12.1",
+    "playwright==1.64.0",
+    "playwright-stealth==2.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.17.1",
+    "mypy==2.4.0",
+]
+
+[project.scripts]
+ptjobs = "ptjobs.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ptjobs"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/ptjobs/api.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.15"
+strict = true
+packages = ["ptjobs"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["parsel.*", "playwright_stealth.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=ptjobs --cov-report=term-missing --cov-fail-under=80 -m 'not live'"
+markers = [
+    "live: tests that hit real external sites (canary); skipped by default",
+]
+
+[tool.coverage.run]
+source = ["ptjobs"]
+branch = true
