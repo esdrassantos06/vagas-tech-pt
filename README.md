@@ -218,8 +218,10 @@ Um comando sem valores apaga esse filtro (por exemplo `/tags`). O `+`/`-`
 funciona em `/tags`, `/cidades`, `/modo`, `/nivel` e `/palavras`.
 
 O nível é detetado pelo título da vaga (por exemplo "Junior", "Pleno",
-"Sénior", "Estágio", "Tech Lead"). Com o filtro de nível ativo, vagas sem nível
-no título não são enviadas.
+"Sénior", "Estágio", "Tech Lead"). Quando o título não diz o nível, conta a
+experiência pedida na descrição: 3 anos ou mais vale para mid e senior, menos
+vale para junior e mid. Sem anos na descrição, a vaga vale para junior, mid e
+senior.
 
 ## Deploy (Coolify)
 

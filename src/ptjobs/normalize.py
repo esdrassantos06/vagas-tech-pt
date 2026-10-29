@@ -44,6 +44,17 @@ _SENIORITY_LEVELS = re.compile(
     r"|(?P<lead>lead|principal|staff|head of))\b"
 )
 
+_YEARS = (
+    r"(?<!\d)(\d{1,2})\s*\+?\s*"
+    r"(?:(?:-|\s(?:a|e|to|and)\s)\s*\d{1,2}\s*\+?\s*)?"
+    r"(?:or more\s+|ou mais\s+)?(?:years?|anos?)\b"
+)
+_REQUIRED_YEARS = re.compile(
+    rf"{_YEARS}(?=[^.]{{0,40}}experi)"
+    rf"|(?:experi\w*|at least|pelo menos|minim\w*|procuramos)[^.\d]{{0,40}}{_YEARS}"
+)
+_MAX_REQUIRED_YEARS = 15
+
 _TAG_ALIASES: dict[str, str] = {
     "python": "python",
     "java": "java",
@@ -216,6 +227,20 @@ def normalize_seniority(title: str | None) -> str:
     """
     match = _SENIORITY_LEVELS.search(_clean(title))
     return match.lastgroup or "unknown" if match else "unknown"
+
+
+def levels_from_description(text: str | None) -> tuple[str, ...] | None:
+    """Levels implied by the years of experience a description asks for.
+
+    3 or more years is mid or senior, fewer is junior or mid. None when the
+    description asks for no years.
+    """
+    for match in _REQUIRED_YEARS.finditer(_clean(text)):
+        years = int(match.group(1) or match.group(2))
+        # Larger numbers are the company's age ("25 anos de experiência").
+        if years <= _MAX_REQUIRED_YEARS:
+            return ("mid", "senior") if years >= 3 else ("junior", "mid")
+    return None
 
 
 def normalize_title(raw: str | None) -> str:
