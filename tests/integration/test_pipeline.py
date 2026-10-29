@@ -1,5 +1,6 @@
 from sqlalchemy import func, select
 
+from ptjobs.errors import SourceError
 from ptjobs.models import Job, ScrapeRun
 from ptjobs.pipeline import run_source
 from ptjobs.sources.base import RawJob
@@ -128,3 +129,41 @@ def test_run_source_detects_seniority(db_session) -> None:
         session=db_session,
     )
     assert db_session.scalars(select(Job)).one().seniority == "junior"
+
+
+def test_run_source_describes_only_new_jobs(db_session) -> None:
+    described: list[str] = []
+
+    def describe(raw: RawJob) -> str:
+        described.append(raw.external_id)
+        return f"Detail for {raw.external_id}: 3+ anos de experiência"
+
+    run_source("itjobs", lambda: [_raw("1")], session=db_session, describe=describe)
+    run_source(
+        "itjobs", lambda: [_raw("1"), _raw("2")], session=db_session, describe=describe
+    )
+
+    assert described == ["1", "2"]
+    db_session.expire_all()
+    first = db_session.scalars(select(Job).where(Job.external_id == "1")).one()
+    assert first.description is not None
+    assert first.description.startswith("We use Python and React.")
+    assert first.description.endswith("Detail for 1: 3+ anos de experiência")
+    assert first.work_mode == "remote"
+
+
+def test_run_source_stops_describing_after_a_failure(db_session) -> None:
+    calls: list[str] = []
+
+    def describe(raw: RawJob) -> str:
+        calls.append(raw.external_id)
+        raise SourceError("blocked")
+
+    run = run_source(
+        "itjobs", lambda: [_raw("1"), _raw("2")], session=db_session, describe=describe
+    )
+
+    assert run.status == "ok"
+    assert calls == ["1"]
+    descriptions = db_session.scalars(select(Job.description)).all()
+    assert descriptions == [_raw("1").description] * 2

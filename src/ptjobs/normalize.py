@@ -45,13 +45,13 @@ _SENIORITY_LEVELS = re.compile(
 )
 
 _YEARS = (
-    r"(?<!\d)(\d{1,2})\s*\+?\s*"
+    r"(?:(ate|up to)\s+)?(?<!\d)(\d{1,2})\s*\+?\s*"
     r"(?:(?:-|\s(?:a|e|to|and)\s)\s*\d{1,2}\s*\+?\s*)?"
-    r"(?:or more\s+|ou mais\s+)?(?:years?|anos?)\b"
+    r"(?:or more\s+|ou mais\s+)?(years?|anos?)\b"
 )
 _REQUIRED_YEARS = re.compile(
     rf"{_YEARS}(?=[^.]{{0,40}}experi)"
-    rf"|(?:experi\w*|at least|pelo menos|minim\w*|procuramos)[^.\d]{{0,40}}{_YEARS}"
+    rf"|(?:experi\w*|at least|pelo menos|minim\w*|procuramos)[^.\d]{{0,40}}?{_YEARS}"
 )
 _MAX_REQUIRED_YEARS = 15
 
@@ -232,14 +232,17 @@ def normalize_seniority(title: str | None) -> str:
 def levels_from_description(text: str | None) -> tuple[str, ...] | None:
     """Levels implied by the years of experience a description asks for.
 
-    3 or more years is mid or senior, fewer is junior or mid. None when the
-    description asks for no years.
+    3 or more years is mid or senior, fewer (or "up to N") is junior or mid.
+    None when the description asks for no years.
     """
     for match in _REQUIRED_YEARS.finditer(_clean(text)):
-        years = int(match.group(1) or match.group(2))
-        # Larger numbers are the company's age ("25 anos de experiência").
-        if years <= _MAX_REQUIRED_YEARS:
-            return ("mid", "senior") if years >= 3 else ("junior", "mid")
+        groups = match.groups()
+        up_to, number, unit = groups[:3] if groups[1] else groups[3:]
+        years = int(number)
+        # A singular "12 ano" is a school year; larger counts are the company's age.
+        if (unit in ("ano", "year") and years != 1) or years > _MAX_REQUIRED_YEARS:
+            continue
+        return ("mid", "senior") if years >= 3 and not up_to else ("junior", "mid")
     return None
 
 

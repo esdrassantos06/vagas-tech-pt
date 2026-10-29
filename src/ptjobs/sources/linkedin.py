@@ -14,12 +14,14 @@ from playwright_stealth import Stealth
 
 from ptjobs.errors import ParseError, SourceError
 from ptjobs.normalize import KNOWN_CITIES, KNOWN_TAGS
-from ptjobs.sources.base import RawJob
+from ptjobs.sources.base import RawJob, join_text
+from ptjobs.sources.http import HttpClient
 
 SOURCE = "linkedin"
 GUEST_SEARCH_URL = (
     "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 )
+DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting"
 DEFAULT_LOCATION = "Portugal"
 PAGE_SIZE = 10
 DYNAMIC_SEARCH_LIMIT = 8
@@ -155,3 +157,20 @@ def fetch(
     if last_error is not None and not collected:
         raise last_error
     return list(collected.values())
+
+
+def detail_url(external_id: str) -> str:
+    """Public guest API URL of one job posting."""
+    return f"{DETAIL_URL}/{external_id}"
+
+
+def parse_detail(html_text: str) -> str | None:
+    """Return the plain-text description of a guest job posting, or None."""
+    return join_text(
+        Selector(html_text).css("div.show-more-less-html__markup ::text").getall()
+    )
+
+
+def describe(client: HttpClient, job: RawJob) -> str | None:
+    """Fetch a job's guest posting and return its description."""
+    return parse_detail(client.get(detail_url(job.external_id)).text)

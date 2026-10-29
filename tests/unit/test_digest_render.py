@@ -4,7 +4,14 @@ import json
 
 import httpx
 
-from ptjobs.digest import Digest, render_discord, render_email_html, render_telegram
+from ptjobs.digest import (
+    Digest,
+    render_discord,
+    render_email_html,
+    render_telegram,
+    render_text,
+    summary,
+)
 from ptjobs.models import Job
 from ptjobs.normalize import canonical_tag, normalize_tags
 from ptjobs.notify import send_email, send_telegram
@@ -155,3 +162,64 @@ def test_verification_email_has_copyable_fallback_link() -> None:
     assert link in text
     assert html.count("https://v/subscriptions/verify?token=a&amp;b") == 3
     assert '<meta charset="utf-8">' in html
+
+
+LONG = (
+    "We need a Backend Engineer with 4+ years of experience in Python and "
+    "FastAPI to build the payments platform. " * 4
+)
+NET_EMPREGOS = (
+    "<b>Empresa: </b>Noesis<br><b>Zona: </b> Lisboa<br><b>Data: </b>29-10-2026"
+    "<br><br><b>Descrição: </b><p>A Noesis procura um <strong>iOS Developer"
+    "</strong> &amp; mais.</p><ul>\n<li>Swift</li></ul>...<br><br>"
+    "<a href='https://www.net-empregos.com/1/x/'>Ver Oferta de Emprego</a>"
+    "<br><br><a href='https://www.net-empregos.com/'>Emprego</a>"
+)
+
+
+def test_summary_is_trimmed_at_a_word_with_an_ellipsis() -> None:
+    text = summary(LONG)
+    assert text is not None
+    assert len(text) <= 201
+    assert text.startswith("We need a Backend Engineer with 4+ years")
+    assert text.endswith("…") and not text.endswith(" …")
+
+
+def test_summary_strips_net_empregos_markup_and_header() -> None:
+    assert summary(NET_EMPREGOS) == "Procura um iOS Developer & mais. Swift ..."
+
+
+def test_summary_starts_at_the_role_not_the_company() -> None:
+    text = (
+        "About us: we are a great company since 1990. We are looking for a Python dev."
+    )
+    assert summary(text) == "Looking for a Python dev."
+    assert summary("Quem somos? Uma empresa. Requisitos: Java") == "Requisitos: Java"
+
+
+def test_summary_is_none_without_text() -> None:
+    assert summary(None) is None
+    assert summary("<p> </p>") is None
+
+
+def test_every_channel_shows_the_summary_and_tags() -> None:
+    job = _job(description="Build APIs in Python.", tags=["python", "fastapi"])
+    digest = _digest([job])
+
+    telegram = render_telegram(digest)
+    assert "Build APIs in Python." in telegram and "python, fastapi" in telegram
+
+    embed = render_discord(digest)["embeds"][0]["description"]
+    assert "Build APIs in Python." in embed and "python, fastapi" in embed
+
+    assert "Build APIs in Python." in render_email_html(digest)
+
+    text = render_text(digest)
+    assert "Build APIs in Python." in text and "python, fastapi" in text
+
+
+def test_summary_is_escaped_in_html_channels() -> None:
+    digest = _digest([_job(description="Salary < 50k & bonus <script>x</script>")])
+    assert "Salary &lt; 50k &amp; bonus x" in render_telegram(digest)
+    assert "Salary &lt; 50k &amp; bonus x" in render_email_html(digest)
+    assert "<script>" not in render_email_html(digest)

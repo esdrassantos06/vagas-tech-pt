@@ -39,6 +39,14 @@ def _scrapers(client: httpx.Client) -> dict[str, object]:
     }
 
 
+def _describers(client: httpx.Client) -> dict[str, object]:
+    polite = HttpClient(client, min_interval=CRAWL_DELAY_SECONDS)
+    return {
+        "itjobs": lambda job: itjobs.describe(polite, job),
+        "linkedin": lambda job: linkedin.describe(polite, job),
+    }
+
+
 def _subscriber_searches() -> list[tuple[str, str]]:
     with session_scope() as session:
         filters = session.scalars(
@@ -52,6 +60,7 @@ def run_scrape(sources: list[str] | None = None) -> None:
     settings = get_settings()
     with httpx.Client(timeout=20.0, follow_redirects=True) as client:
         scrapers = _scrapers(client)
+        describers = _describers(client)
         for name in sources or list(scrapers):
             with session_scope() as session:
                 run_source(
@@ -59,6 +68,7 @@ def run_scrape(sources: list[str] | None = None) -> None:
                     scrapers[name],  # type: ignore[arg-type]
                     session=session,
                     alert=lambda message: alert_admin(settings, client, message),
+                    describe=describers.get(name),  # type: ignore[arg-type]
                 )
 
 

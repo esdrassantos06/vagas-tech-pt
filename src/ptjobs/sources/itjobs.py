@@ -8,13 +8,15 @@ from urllib.parse import urljoin
 from parsel import Selector
 
 from ptjobs.errors import ParseError, SourceError
-from ptjobs.sources.base import RawJob
+from ptjobs.sources.base import RawJob, join_text
 from ptjobs.sources.http import HttpClient
 
 SOURCE = "itjobs"
 BASE_URL = "https://www.itjobs.pt"
 LISTING_URL = f"{BASE_URL}/emprego"
 _ID_RE = re.compile(r"/oferta/(\d+)/")
+# itjobs appends a trace line with the requester's IP and user agent.
+_TRACE_RE = re.compile(r"^web:\S")
 
 
 def parse(html_text: str) -> list[RawJob]:
@@ -76,3 +78,24 @@ def fetch(client: HttpClient, *, max_pages: int = 3) -> list[RawJob]:
         seen.update(job.external_id for job in new)
         collected.extend(new)
     return collected
+
+
+def parse_detail(html_text: str) -> str | None:
+    """Return the plain-text description of an itjobs.pt job page, or None.
+
+    Drops the email/save buttons and the trace line itjobs appends.
+    """
+    blocks = Selector(html_text).css("div.content-block")
+    if not blocks:
+        return None
+    parts = (
+        blocks[0]
+        .xpath("./text() | ./*[not(contains(@class, 'action-pills'))]//text()")
+        .getall()
+    )
+    return join_text(part for part in parts if not _TRACE_RE.match(part.strip()))
+
+
+def describe(client: HttpClient, job: RawJob) -> str | None:
+    """Fetch a job's own page and return its description."""
+    return parse_detail(client.get(job.url).text)

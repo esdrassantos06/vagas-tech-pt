@@ -220,8 +220,13 @@ funciona em `/tags`, `/cidades`, `/modo`, `/nivel` e `/palavras`.
 O nível é detetado pelo título da vaga (por exemplo "Junior", "Pleno",
 "Sénior", "Estágio", "Tech Lead"). Quando o título não diz o nível, conta a
 experiência pedida na descrição: 3 anos ou mais vale para mid e senior, menos
-vale para junior e mid. Sem anos na descrição, a vaga vale para junior, mid e
-senior.
+(ou "até N anos") vale para junior e mid. Sem anos na descrição, a vaga vale
+para junior, mid e senior.
+
+Para itjobs.pt e LinkedIn, a descrição completa vem da página de cada vaga nova
+(um pedido por vaga, só na primeira vez que aparece). No Net-Empregos vem do
+RSS, que a corta. Cada alerta mostra, além de empresa, nível, cidade e modo, as
+tags e um resumo da vaga.
 
 ## Deploy (Coolify)
 

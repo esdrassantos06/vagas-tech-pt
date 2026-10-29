@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -23,3 +25,12 @@ class RawJob:
     description: str | None = None
     salary_raw: str | None = None
     published_at: datetime | None = None
+
+
+_WS = re.compile(r"\s+")
+
+
+def join_text(parts: Iterable[str]) -> str | None:
+    """Join scraped text nodes into one whitespace-collapsed string, or None."""
+    text = _WS.sub(" ", " ".join(part.strip() for part in parts)).strip()
+    return text or None

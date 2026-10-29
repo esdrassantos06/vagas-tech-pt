@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import func, select
@@ -11,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from ptjobs import normalize
+from ptjobs.errors import SourceError
 from ptjobs.models import Job, ScrapeRun
 from ptjobs.sources.base import RawJob
 
@@ -33,6 +35,7 @@ _MUTABLE_COLUMNS = (
     "fingerprint",
 )
 Fetcher = Callable[[], Iterable[RawJob]]
+Describe = Callable[[RawJob], str | None]
 Alert = Callable[[str], None]
 
 
@@ -69,6 +72,7 @@ def run_source(
     *,
     session: Session,
     alert: Alert | None = None,
+    describe: Describe | None = None,
 ) -> ScrapeRun:
     """Fetch a source, upsert its tech jobs, and persist a ScrapeRun record.
 
@@ -77,11 +81,16 @@ def run_source(
     deduplicated on external_id (last wins) before the upsert, which refreshes
     last_seen_at and mutable fields on conflict. Any failure marks the run
     failed, records the message, and fires the admin alert (itself guarded).
+
+    With describe, each job not yet stored gets its full description appended
+    to the listing one; stored jobs keep the description they already have.
     """
     run = ScrapeRun(source=source)
     try:
         with session.begin_nested():
             raws = list(fetcher())
+            if describe is not None:
+                raws = _describe_new(session, source, raws, describe)
             rows = _dedup(
                 row
                 for row in (_to_row(source, raw) for raw in raws)
@@ -104,6 +113,36 @@ def run_source(
     session.add(run)
     session.flush()
     return run
+
+
+def _describe_new(
+    session: Session, source: str, raws: list[RawJob], describe: Describe
+) -> list[RawJob]:
+    stored = dict(
+        session.execute(
+            select(Job.external_id, Job.description).where(
+                Job.source == source,
+                Job.external_id.in_([raw.external_id for raw in raws]),
+            )
+        ).all()
+    )
+    described: list[RawJob] = []
+    blocked = False
+    for raw in raws:
+        if raw.external_id in stored:
+            description = stored[raw.external_id] or raw.description
+        elif blocked:
+            description = raw.description
+        else:
+            try:
+                detail = describe(raw)
+            except SourceError:
+                logger.warning("%s: job pages unavailable, skipping the rest", source)
+                blocked = True
+                detail = None
+            description = " ".join(filter(None, (raw.description, detail))) or None
+        described.append(replace(raw, description=description))
+    return described
 
 
 def _dedup(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
