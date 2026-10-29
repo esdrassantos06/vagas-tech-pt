@@ -54,10 +54,35 @@ def test_scrape_commits_each_source_separately(monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "session_scope", fake_scope)
     monkeypatch.setattr(
-        cli, "run_source", lambda name, fetcher, *, session, alert: None
+        cli, "run_source", lambda name, fetcher, *, session, alert, describe: None
     )
     monkeypatch.setattr(
         cli, "_scrapers", lambda client: {"itjobs": None, "net_empregos": None}
     )
     cli.run_scrape(["itjobs", "net_empregos"])
     assert len(scopes) == 2
+
+
+def test_scrape_describes_itjobs_and_linkedin_jobs(monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_scope():
+        yield object()
+
+    describers: dict[str, object] = {}
+
+    def fake_run_source(name, fetcher, *, session, alert, describe):
+        describers[name] = describe
+
+    monkeypatch.setattr(cli, "session_scope", fake_scope)
+    monkeypatch.setattr(cli, "run_source", fake_run_source)
+    monkeypatch.setattr(
+        cli,
+        "_scrapers",
+        lambda client: {"itjobs": None, "linkedin": None, "net_empregos": None},
+    )
+    cli.run_scrape()
+    assert callable(describers["itjobs"])
+    assert callable(describers["linkedin"])
+    assert describers["net_empregos"] is None

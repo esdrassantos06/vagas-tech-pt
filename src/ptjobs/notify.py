@@ -27,6 +27,7 @@ from ptjobs.digest import (
 )
 from ptjobs.errors import ChannelError, DestinationGoneError
 from ptjobs.models import Job, Subscription
+from ptjobs.normalize import levels_from_description
 
 _DISCORD_HOSTS = frozenset({"discord.com", "discordapp.com"})
 _TELEGRAM_API = "https://api.telegram.org"
@@ -48,7 +49,9 @@ def job_matches(job: Job, filters: dict[str, Any]) -> bool:
 
     Dimensions are ANDed; values within a dimension are ORed. Recognized keys:
     keywords, cities, work_modes, tags, seniorities (lists), and min_salary
-    (int; 0 means no filter). An empty or missing filter set matches every job.
+    (int; 0 means no filter). A job without a level in its title matches the
+    levels implied by the years its description asks for, or junior, mid and
+    senior when it asks for none. An empty or missing filter set matches every job.
     """
     keywords = filters.get("keywords")
     if keywords:
@@ -71,13 +74,19 @@ def job_matches(job: Job, filters: dict[str, Any]) -> bool:
         return False
 
     seniorities = filters.get("seniorities")
-    if seniorities and job.seniority not in seniorities:
+    if seniorities and not set(_job_levels(job)) & set(seniorities):
         return False
 
     min_salary = filters.get("min_salary")
     return not (
         min_salary and (job.salary_max is None or job.salary_max < int(min_salary))
     )
+
+
+def _job_levels(job: Job) -> tuple[str, ...]:
+    if job.seniority != "unknown":
+        return (job.seniority,)
+    return levels_from_description(job.description) or ("junior", "mid", "senior")
 
 
 def validate_discord_webhook(url: str) -> bool:

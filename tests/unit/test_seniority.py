@@ -4,7 +4,7 @@ import pytest
 
 from ptjobs.digest import Digest, render_telegram
 from ptjobs.models import Job
-from ptjobs.normalize import normalize_seniority
+from ptjobs.normalize import levels_from_description, normalize_seniority
 from ptjobs.notify import job_matches
 
 
@@ -50,12 +50,72 @@ def test_user_shorthands(word: str, expected: str) -> None:
     assert normalize_seniority(word) == expected
 
 
-def test_filter_matches_only_listed_levels_and_skips_unknown() -> None:
+@pytest.mark.parametrize(
+    "description,expected",
+    [
+        ("3+ years of experience with Python", ("mid", "senior")),
+        ("Minimum 5 years of professional experience", ("mid", "senior")),
+        ("At least 4 years building APIs", ("mid", "senior")),
+        ("Experiência mínima de 3 anos em Java", ("mid", "senior")),
+        ("Pelo menos 6 anos de experiência", ("mid", "senior")),
+        ("3-5 anos de experiência em React", ("mid", "senior")),
+        ("<li>5 or more years of experience</li>", ("mid", "senior")),
+        ("1-2 years of experience", ("junior", "mid")),
+        ("Experiência de 2 anos em SQL", ("junior", "mid")),
+        ("Empresa com 20 anos de história. Procuramos dev Python.", None),
+        ("Com mais de 25 anos de experiência no mercado", None),
+        (
+            "Somos 30 anos de experiência. Pedimos 2 anos de experiência",
+            ("junior", "mid"),
+        ),
+        ("2 anos de experi&#xea;ncia", ("junior", "mid")),
+        ("Experiência entre 4 a 7 anos como business analyst", ("mid", "senior")),
+        ("Experiência entre 1 a 3 anos em análise de dados", ("junior", "mid")),
+        ("Procuramos 3 a 5 anos em engenhari... Ver oferta", ("mid", "senior")),
+        ("Senioridade: Senior (7 a 10+ anos de experiência)", ("mid", "senior")),
+        ("Between 3 and 5 years of experience as a BA", ("mid", "senior")),
+        ("Requisitos: 8+ anos de experiência em backend", ("mid", "senior")),
+        ("Experiência profissional superior a 2 anos", ("junior", "mid")),
+        ("Mais de 100 anos de experiência no mercado mundial", None),
+        ("Com mais de 10 anos de existência a nível nacional", None),
+        ("12º ano ou curso técnico profissional", None),
+        ("Está pelo 5 ano consecutivo no top das empresas", None),
+        ("Perfil: - 12 ano de escolaridade; - experiência em vendas", None),
+        ("Experiência profissional mínima de 1 ano em funções", ("junior", "mid")),
+        ("Área relacionada; até 3 anos de experiência profissional", ("junior", "mid")),
+        ("Up to 4 years of experience in Python", ("junior", "mid")),
+        ("Join our team in Lisbon", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_levels_from_required_years(
+    description: str | None, expected: tuple[str, ...] | None
+) -> None:
+    assert levels_from_description(description) == expected
+
+
+def test_filter_skips_other_levels_from_the_title() -> None:
     filters = {"seniorities": ["junior", "mid"]}
     assert job_matches(Job(title="x", seniority="junior", tags=[]), filters)
     assert not job_matches(Job(title="x", seniority="senior", tags=[]), filters)
-    assert not job_matches(Job(title="x", seniority="unknown", tags=[]), filters)
     assert job_matches(Job(title="x", seniority="unknown", tags=[]), {})
+
+
+def test_unknown_level_uses_required_years_from_the_description() -> None:
+    def job(description: str | None) -> Job:
+        return Job(title="x", seniority="unknown", tags=[], description=description)
+
+    five_years = job("5+ years of experience")
+    assert job_matches(five_years, {"seniorities": ["senior"]})
+    assert job_matches(five_years, {"seniorities": ["mid"]})
+    assert not job_matches(five_years, {"seniorities": ["junior"]})
+
+    no_years = job("Great team, remote friendly")
+    for level in ("junior", "mid", "senior"):
+        assert job_matches(no_years, {"seniorities": [level]})
+    assert not job_matches(no_years, {"seniorities": ["intern"]})
+    assert not job_matches(no_years, {"seniorities": ["lead"]})
 
 
 def test_digest_shows_the_level() -> None:

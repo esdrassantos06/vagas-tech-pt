@@ -54,6 +54,18 @@ class TestItjobs:
         with pytest.raises(ParseError):
             itjobs.parse("<html><body><p>no jobs here</p></body></html>")
 
+    def test_parses_detail_description(self) -> None:
+        text = itjobs.parse_detail(_read("itjobs", "detail.html"))
+        assert text is not None
+        assert text.startswith("Procuramos um Java Developer para integrar")
+        assert "3+ anos de experiência em Java Spring Boot" in text
+        assert "<endereço ocultado>" in text
+        assert "Guardar" not in text and "Enviar-me" not in text
+        assert "web:" not in text and "192.0.2.10" not in text
+
+    def test_detail_without_description_is_none(self) -> None:
+        assert itjobs.parse_detail("<html><body></body></html>") is None
+
 
 class TestLinkedin:
     def test_parses_cards(self) -> None:
@@ -70,6 +82,21 @@ class TestLinkedin:
     def test_empty_html_raises(self) -> None:
         with pytest.raises(ParseError):
             linkedin.parse("<html><body></body></html>")
+
+    def test_parses_detail_description(self) -> None:
+        text = linkedin.parse_detail(_read("linkedin", "detail.html"))
+        assert text == (
+            "About the role We need a Backend Engineer with 4+ years of "
+            "experience in Python & FastAPI. Hybrid in Porto"
+        )
+
+    def test_detail_without_description_is_none(self) -> None:
+        assert linkedin.parse_detail("<html><body></body></html>") is None
+
+    def test_detail_url_uses_the_guest_job_posting_api(self) -> None:
+        assert linkedin.detail_url("4387969629") == (
+            "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4387969629"
+        )
 
 
 def test_net_empregos_parse_bytes_honors_declaration() -> None:

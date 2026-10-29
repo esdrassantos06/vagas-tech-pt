@@ -6,8 +6,9 @@ before being placed in HTML (email, Telegram, web pages).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from html import escape
+from html import escape, unescape
 from typing import Any
 
 from ptjobs.models import Job
@@ -23,6 +24,20 @@ _SENIORITIES = {
     "lead": "Lead",
 }
 _WORK_MODES = {"remote": "Remoto", "hybrid": "Híbrido", "onsite": "Presencial"}
+SUMMARY_MAX_CHARS = 200
+_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
+_WS = re.compile(r"\s+")
+# net-empregos descriptions open with Empresa/Zona/Data and end with its links.
+_NET_HEADER = re.compile(r"^.*?Descri[cç][aã]o:", re.IGNORECASE | re.DOTALL)
+_NET_FOOTER = re.compile(r"Ver Oferta de Emprego.*$", re.IGNORECASE | re.DOTALL)
+_ROLE_START = re.compile(
+    r"\b(?:procuramos|procura(?:-se)?|estamos [àa] procura|looking for|"
+    r"we(?: are|'re) hiring|is hiring|is seeking|seeking|about the role|the role|"
+    r"sobre a fun[cç][aã]o|descri[cç][aã]o da fun[cç][aã]o|your role|o teu papel|"
+    r"responsibilities|responsabilidades|fun[cç][oõ]es|what you.ll do|"
+    r"o que vais fazer|requisitos|requirements)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +64,29 @@ def _meta(job: Job) -> str:
     return " · ".join(parts)
 
 
+def summary(description: str | None) -> str | None:
+    """Plain text about the role, cut at a word near 200 chars.
+
+    Starts at the first phrase about the role ("looking for", "requisitos"...)
+    so the usual company introduction is skipped.
+    """
+    if not description:
+        return None
+    text = _NET_FOOTER.sub("", _NET_HEADER.sub("", description, count=1))
+    text = _WS.sub(" ", unescape(_TAG.sub(" ", text))).strip()
+    if role := _ROLE_START.search(text):
+        text = text[role.start() :]
+        text = text[:1].upper() + text[1:]
+    if len(text) <= SUMMARY_MAX_CHARS:
+        return text or None
+    return text[:SUMMARY_MAX_CHARS].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
+
+
+def _extras(job: Job) -> list[str]:
+    tags = ", ".join(job.tags[:5])
+    return [line for line in (tags, summary(job.description)) if line]
+
+
 def _headline(digest: Digest) -> str:
     total = len(digest.jobs) + digest.remaining
     return f"{total} vaga nova" if total == 1 else f"{total} vagas novas"
@@ -58,7 +96,8 @@ def render_text(digest: Digest) -> str:
     """Plain-text digest (email fallback part)."""
     lines = [_headline(digest), ""]
     for job in digest.jobs:
-        lines += [f"- {job.title}", f"  {_meta(job)}", f"  {job.url}", ""]
+        extras = [f"  {line}" for line in _extras(job)]
+        lines += [f"- {job.title}", f"  {_meta(job)}", *extras, f"  {job.url}", ""]
     if digest.remaining:
         lines += [f"... e mais {digest.remaining}: {digest.jobs_url}", ""]
     lines.append(f"Cancelar alertas: {digest.unsubscribe_url}")
@@ -72,8 +111,13 @@ def render_telegram(digest: Digest) -> str:
     """
     total = len(digest.jobs) + digest.remaining
     entries = [
-        f'<b><a href="{escape(job.url)}">{escape(job.title)}</a></b>\n'
-        f"{escape(_meta(job))}"
+        "\n".join(
+            [
+                f'<b><a href="{escape(job.url)}">{escape(job.title)}</a></b>',
+                escape(_meta(job)),
+                *(escape(line) for line in _extras(job)),
+            ]
+        )
         for job in digest.jobs
     ]
     shown = len(entries)
@@ -106,7 +150,7 @@ def render_discord(digest: Digest) -> dict[str, Any]:
             {
                 "title": job.title[:256],
                 "url": job.url,
-                "description": _meta(job)[:300],
+                "description": "\n".join([_meta(job), *_extras(job)])[:600],
                 "color": int(ACCENT[1:], 16),
             }
             for job in digest.jobs[:10]
@@ -230,6 +274,12 @@ def _job_row(job: Job) -> str:
         f'<span class="chip" style="display:inline-block;margin:0 6px 6px 0;padding:3px 9px;border-radius:6px;background:{c["chip"]};font-size:12px;line-height:1.4;color:#33413a">{escape(tag)}</span>'
         for tag in job.tags[:5]
     )
+    about = summary(job.description)
+    about_html = (
+        f'<div class="muted" style="margin-top:8px;font-size:14px;line-height:1.5;color:{c["muted"]}">{escape(about)}</div>'
+        if about
+        else ""
+    )
     source = _SOURCES.get(job.source or "")
     via = (
         f'<span class="faint" style="display:inline-block;margin:0 0 6px;font-size:12px;line-height:1.4;color:{c["faint"]}">via {source}</span>'
@@ -241,6 +291,7 @@ def _job_row(job: Job) -> str:
 <td class="line" style="padding:18px 0 12px;border-top:1px solid {c["line"]}">
 <a class="ink" href="{escape(job.url or "")}" style="font-size:17px;line-height:1.35;font-weight:700;color:{c["ink"]};text-decoration:none">{escape(job.title or "")}</a>
 <div class="muted" style="margin-top:5px;font-size:14px;line-height:1.5;color:{c["muted"]}">{meta}{salary}</div>
+{about_html}
 <div style="margin-top:10px">{chips}{via}</div>
 </td></tr></table></td></tr>"""
 
