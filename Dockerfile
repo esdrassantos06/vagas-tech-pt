@@ -29,7 +29,7 @@ WORKDIR /app
 # stays cached across code-only deploys.
 COPY --from=deps /app/.venv /app/.venv
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl tini \
     && rm -rf /var/lib/apt/lists/* \
     && playwright install --with-deps --only-shell chromium \
     && useradd --create-home --uid 10001 appuser
@@ -38,5 +38,7 @@ COPY --from=builder --chown=appuser:appuser /app /app
 USER appuser
 
 EXPOSE 8000
-ENTRYPOINT ["/app/entrypoint.sh"]
+# tini runs as PID 1 and reaps the helper processes Chromium leaves behind;
+# uvicorn as PID 1 never waits on them, so they pile up as zombies.
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]
 CMD ["api"]
