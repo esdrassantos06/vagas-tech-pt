@@ -13,7 +13,7 @@ dependencies = [
     "pydantic-settings==2.16.0",
     "email-validator==2.3.0",
     "sqlalchemy==2.1.5",
-    "psycopg[binary]==3.3.6",
+    "psycopg[binary]==3.3.8",
     "alembic==1.20.0",
     "httpx==0.28.1",
     "cryptography==50.0.2",
