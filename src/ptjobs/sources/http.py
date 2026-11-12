@@ -49,6 +49,7 @@ class HttpClient:
         headers = {"User-Agent": USER_AGENT, **(kwargs.pop("headers", None) or {})}
         kwargs.setdefault("follow_redirects", True)
         last_error: Exception | None = None
+        last_cause = ""
 
         for attempt in range(self._max_retries + 1):
             response = self._send(url, headers, kwargs)
@@ -64,9 +65,11 @@ class HttpClient:
                     f"GET {url} -> {response.status_code}",
                     details={"status": response.status_code},
                 )
+                last_cause = str(response.status_code)
                 delay = self._retry_delay(attempt, response)
             else:
                 last_error = response
+                last_cause = f"{type(response).__name__}: {response}"
                 delay = self._retry_delay(attempt, None)
 
             if attempt >= self._max_retries:
@@ -74,7 +77,7 @@ class HttpClient:
             self._sleep(delay)
 
         raise SourceError(
-            f"GET {url} failed after {self._max_retries} retries",
+            f"GET {url} failed after {self._max_retries} retries (last: {last_cause})",
             details=getattr(last_error, "details", None),
         ) from last_error
 
