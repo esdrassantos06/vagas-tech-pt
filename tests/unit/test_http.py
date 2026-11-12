@@ -109,6 +109,23 @@ def test_exhausts_retries_on_persistent_500() -> None:
     assert clock.slept == [0.5, 1.0, 2.0]
 
 
+def test_exhausted_retries_name_last_status() -> None:
+    clock = FakeClock()
+    with pytest.raises(SourceError, match=r"failed after 1 retries \(last: 503\)"):
+        _client(lambda r: httpx.Response(503), clock, max_retries=1).get("/jobs")
+
+
+def test_exhausted_retries_name_last_network_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    clock = FakeClock()
+    with pytest.raises(
+        SourceError, match=r"failed after 1 retries \(last: ReadTimeout: timed out\)"
+    ):
+        _client(handler, clock, max_retries=1).get("/jobs")
+
+
 def test_retries_on_network_error() -> None:
     attempts = []
 
